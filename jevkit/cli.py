@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import __version__, catalog, choose, client, compact, key_setup, keystore, ladder, rerank, replay, route, skillpick, spend, supervise
+from . import __version__, catalog, choose, client, compact, key_setup, keystore, ladder, rerank, replay, route, skillpick, spend, supervise, triage
 
 
 def _stdin_json() -> Any:
@@ -126,6 +126,23 @@ def cmd_choose(args: argparse.Namespace) -> int:
 def _rungs(config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     settings = (config or route.load_config()).get("escalation") or {}
     return list(settings.get("rungs") or [])
+
+
+def cmd_triage(args: argparse.Namespace) -> int:
+    """Classify incoming messages: act now, today, queue, or ignore."""
+    if args.file:
+        raw = json.loads(Path(args.file).read_text(encoding="utf-8"))
+        messages = raw if isinstance(raw, list) else raw.get("messages") or raw.get("items") or []
+    else:
+        raw = _stdin_json()
+        messages = raw if isinstance(raw, list) else [raw]
+    if not messages:
+        raise SystemExit("no messages to classify")
+    rows = triage.classify_many(messages, workers=args.workers,
+                                known_domains=args.customer_domain or [])
+    if args.summary:
+        return _out(triage.summarize(rows))
+    return _out({"summary": triage.summarize(rows), "messages": rows})
 
 
 def cmd_spend(args: argparse.Namespace) -> int:
@@ -271,6 +288,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("choose", help="pick the next GUI or browser action from a candidate table")
     p.add_argument("--mock", action="store_true")
     p.set_defaults(func=cmd_choose)
+
+    p = sub.add_parser("triage", help="classify incoming messages: now / today / queue / ignore")
+    p.add_argument("--file", help="JSON list of messages (subject, content, sender); else read stdin")
+    p.add_argument("--customer-domain", action="append", help="a domain whose mail is a real customer (repeatable)")
+    p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--summary", action="store_true", help="counts only, no per-message rows")
+    p.set_defaults(func=cmd_triage)
 
     p = sub.add_parser("spend", help="weekly cost report: what ran, what it cost, what would have been cheaper")
     p.add_argument("--usage", action="append", help="JSON export of metered usage rows (repeatable)")

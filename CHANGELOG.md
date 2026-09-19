@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0 (2026-09-19)
+
+- **`jev triage`** — classify a message the moment it lands: act **now**, **today**, **queue**, or **ignore**. One Jev request per message (~400 ms, $0.00006) answers urgency, kind, whether a person must decide, and whether the sender is blocked. Cheap enough to run on every message, which is the point — triage that only runs when someone remembers to look is not triage.
+- Code makes the routing call, not the model: Jev supplies calibrated readings and the thresholds are ours, in one readable function. Urgency is read from the probability mass at the top of the rubric, never the averaged score.
+- Fails toward attention: Jev down routes to `today`, an unsure answer never lands in `ignore`, and a message that looks like it carries a credential is **never sent** and goes straight to a person.
+- Tuned on 20 real support emails. Two rules earned their place there: a known customer reporting a problem they cannot work around is escalated even when they phrase it calmly ("can't do anything with these" scored mid-rubric and sat in `today`), but only when the message also reaches "this week" urgency — escalating low-urgency grumbles trains everyone to ignore the `now` pile.
+
 ## 0.7.1 (2026-09-19)
 
 Two bugs found by testing a live deployment, both of which fail silently — the feature simply appears not to work.

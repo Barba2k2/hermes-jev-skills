@@ -15,7 +15,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jevkit import (choose, client, compact, key_setup, keystore, ladder, privacy,  # noqa: E402
-                    rerank, replay, route, skillpick, spend, supervise)
+                    rerank, replay, route, skillpick, spend, supervise, triage)
 
 KEY = "apikey_" + "a1" * 30
 
@@ -1152,3 +1152,79 @@ class LaneCollisionTests(unittest.TestCase):
                     self.assertLessEqual(len(lane), self.ho.LANE_MAX)
                     for path in (self.ho.capsule_path(lane), self.ho.pending_path(lane)):
                         self.assertEqual(path.resolve().parent, root, f"escaped for {chat!r}")
+
+
+def jev_mail(urgency_spread, kind="problem", blocked=0.1, deadline=0.1, confidence=0.9):
+    avg = sum(level * p for level, p in urgency_spread.items())
+
+    def answer(name, question, state):
+        if name == "urgency":
+            return {"type": "score", "score": avg, "confidence": confidence,
+                    "probabilities": {str(k): v for k, v in urgency_spread.items()}}
+        if name == "kind":
+            return {"type": "choice", "choice": kind, "confidence": 0.9, "probabilities": {kind: 0.9}}
+        return {"type": "noul", "noul": {"blocked": blocked, "deadline": deadline}.get(name, 0.1)}
+    return fake(answer)
+
+
+class TriageTests(unittest.TestCase):
+    """Two ways to fail: bury the outage, or cry wolf until nobody looks at `now`."""
+
+    def test_an_outage_goes_to_now(self):
+        out = triage.classify("everything is down", "the office agent has stopped responding entirely",
+                              sender="s@customer.com", transport=jev_mail({4: 0.9, 3: 0.1}))
+        self.assertEqual(out["route"], "now")
+
+    def test_a_newsletter_is_ignored(self):
+        out = triage.classify("Our December webinar", "Register now for our product update",
+                              sender="news@vendor.com", transport=jev_mail({0: 0.9, 1: 0.1}, kind="vendor"))
+        self.assertEqual(out["route"], "ignore")
+
+    def test_a_stuck_customer_is_escalated_even_when_they_phrase_it_calmly(self):
+        """The real case: "can't do anything with these" scored mid-rubric and sat in today."""
+        out = triage.classify("Can't read incoming POs", "I can't do anything with these PDFs",
+                              sender="s@customer.com", known_customer=True,
+                              transport=jev_mail({2: 0.5, 3: 0.4, 4: 0.1}, kind="problem", blocked=0.6))
+        self.assertEqual(out["route"], "now")
+        self.assertIn("stuck", out["reason"])
+
+    def test_a_mildly_blocked_musing_does_not_cry_wolf(self):
+        """Escalating low-urgency grumbles trains everyone to ignore the now pile."""
+        out = triage.classify("A clearer view of agent issues", "some thoughts on what trips it up",
+                              sender="s@customer.com", known_customer=True,
+                              transport=jev_mail({1: 0.6, 2: 0.4}, kind="problem", blocked=0.55))
+        self.assertNotEqual(out["route"], "now")
+
+    def test_a_message_with_a_credential_is_never_sent_and_goes_to_a_person(self):
+        transport = jev_mail({0: 1.0})
+        out = triage.classify("Allison passwords", "her password is hunter2, please reset",
+                              sender="s@customer.com", transport=transport)
+        self.assertEqual(out["route"], "now")
+        self.assertFalse(out["sent_to_jev"])
+        self.assertEqual(transport.calls, [])
+
+    def test_jev_down_means_a_human_sees_it_today_not_that_it_vanishes(self):
+        def down(body, headers, timeout):
+            raise client.JevError("network")
+        out = triage.classify("anything", "anything at all", transport=down)
+        self.assertEqual(out["route"], "today")
+        self.assertIn("unavailable", out["reason"])
+
+    def test_an_unsure_answer_is_never_filed_away_unseen(self):
+        out = triage.classify("hmm", "not sure what this is",
+                              transport=jev_mail({0: 0.8, 1: 0.2}, kind="notice", confidence=0.3))
+        self.assertEqual(out["route"], "queue")
+
+    def test_automated_mail_is_recognised_without_a_model(self):
+        self.assertTrue(triage._looks_automated("mailer-daemon@x.com", "Undeliverable"))
+        self.assertTrue(triage._looks_automated("noreply@x.com", "Your receipt"))
+        self.assertFalse(triage._looks_automated("suzanne@customer.com", "Can't read the POs"))
+
+    def test_summary_counts_routes_and_flags_low_confidence(self):
+        rows = [triage.classify(f"s{i}", "body text here",
+                                transport=jev_mail({4: 0.9}, confidence=0.9 if i else 0.2))
+                for i in range(3)]
+        s = triage.summarize(rows)
+        self.assertEqual(s["messages"], 3)
+        self.assertEqual(s["routes"]["now"], 3)
+        self.assertEqual(len(s["needs_review"]), 1)
