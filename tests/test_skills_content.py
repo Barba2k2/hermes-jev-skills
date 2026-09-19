@@ -58,3 +58,37 @@ class SkillContentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SkillCommandsExistTests(unittest.TestCase):
+    """Every `jev <subcommand>` a skill tells an agent to run must be real.
+
+    jev-frontier-work told agents to run `jev escalate` at three separate places. The
+    command was renamed to `jev ladder` and the skill was never updated, so any agent
+    that loaded that skill errored three times and had no way to discover the real name.
+    In a repo whose whole premise is "an agent reads a SKILL.md and acts", this is the
+    most damaging drift there is, and it is trivially checkable.
+    """
+
+    def test_every_jev_command_in_a_skill_is_a_real_subcommand(self):
+        from jevkit import cli
+        parser = cli.build_parser()
+        known = set()
+        for action in parser._actions:
+            if getattr(action, "choices", None) and isinstance(action.choices, dict):
+                known |= set(action.choices)
+        self.assertIn("ladder", known, "parser introspection failed; fix this test")
+
+        # `/jev routing shadow` is a Hermes slash command, not a CLI subcommand. The leading
+        # slash is what tells them apart.
+        pattern = re.compile(r"(?<![\w`/])jev\s+([a-z][a-z-]+)")
+        allowed_words = {"choose", "status", "refuse", "clear"}      # ladder/choose sub-verbs
+        offenders = []
+        for skill in sorted(SKILLS.glob("*/SKILL.md")):
+            for number, line in enumerate(skill.read_text(encoding="utf-8").splitlines(), 1):
+                for match in pattern.finditer(line):
+                    word = match.group(1)
+                    if word not in known and word not in allowed_words:
+                        offenders.append(f"{skill.parent.name}/SKILL.md:{number}: jev {word}")
+        self.assertEqual(offenders, [], "skills reference commands that do not exist:\n" +
+                         "\n".join(offenders))

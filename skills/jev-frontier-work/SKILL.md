@@ -23,7 +23,7 @@ Only for work the router called **hard**. If you are about to use a frontier sea
 rename, a lookup, a format, or a summary, stop.
 
 ```bash
-jev escalate            # Hermes: the jev_escalate tool, action "choose"
+jev ladder choose       # Hermes: the jev_escalate tool, action "choose"
 ```
 
 It returns the rung to use and why. The ladder is ordered by what is already paid for,
@@ -40,14 +40,14 @@ and it steps down as seats fill:
 **When a seat turns you away, report it:**
 
 ```bash
-jev escalate refuse --rung <name> --reason "<the exact quota message>"
+jev ladder refuse --rung <name> --reason "<the exact quota message>"
 ```
 
 This is the part people skip, and it is the part that matters. The refusal is written to
 shared state, so all the other agents skip that seat instead of each discovering the same
 429. One wasted turn instead of forty.
 
-If a seat comes back early, `jev escalate clear --rung <name>`.
+If a seat comes back early, `jev ladder clear --rung <name>`.
 
 ## 2. Hand off properly
 

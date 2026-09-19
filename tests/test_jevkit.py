@@ -1384,6 +1384,16 @@ class TrackingNumberRedactionTests(unittest.TestCase):
             self.assertIn(tracking, out, tracking)
             self.assertNotIn("[phone]", out, tracking)
 
+    def test_a_letter_immediately_before_the_digits_does_not_hide_a_phone(self):
+        """The first fix for the tracking bug widened the phone lookbehind to exclude
+        letters. That traded a data-loss bug for a privacy leak: x8505550134,
+        ext8505550134 and Phone8505550134 all stopped being redacted."""
+        for phone in ("x8505550134", "ext8505550134", "Phone8505550134",
+                      "Tel:8505550134", "Mobile:8505550134"):
+            out = privacy.redact(f"reach me on {phone}")
+            self.assertIn("[phone]", out, phone)
+            self.assertNotIn("5550134", out, phone)
+
     def test_real_phone_numbers_are_still_masked(self):
         for phone in ("850-555-0134", "(850) 555-0134", "+1 850 555 0134", "8505550134"):
             out = privacy.redact(f"Call me on {phone} tomorrow")

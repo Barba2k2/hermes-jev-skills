@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import List
 
 _SECRET_WORDS = re.compile(
     r"(?i)(api[_ -]?key|access[_ -]?token|authorization\s*:|bearer\s+[a-z0-9._-]{8,}|password|passwd|"
@@ -28,13 +29,17 @@ _TOKEN_SHAPES = re.compile(
     r"AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|apikey_[A-Za-z0-9_]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})\b"
 )
 _EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-# The lookbehind excludes letters as well as digits. Without that, the digit tail of a
-# carrier tracking number reads as country-code + 3 + 3 + 4 and gets masked:
-# "1Z999AA10123456784" became "1Z999AA[phone]". Those numbers are the operational spine
-# of a shipping desk, and a redactor that silently eats them makes the text useless while
-# looking like it worked. A real phone number never begins immediately after a letter.
-_PHONE = re.compile(
-    r"(?<![A-Za-z0-9])(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
+_PHONE = re.compile(r"(?<!\d)(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
+# A UPS tracking number's digit tail parses as country-code + 3 + 3 + 4, so the phone rule
+# ate it: "1Z999AA10123456784" became "1Z999AA[phone]". Those numbers are the operational
+# spine of a shipping desk and a redactor that silently destroys them looks like it worked.
+#
+# The first fix was to widen the phone lookbehind to exclude letters too. That was wrong:
+# it stopped redacting "x8505550134", "ext8505550134" and "Phone8505550134" — trading a
+# data-loss bug for a privacy leak. Protect the specific thing instead of blunting the
+# general rule. Pure-digit carrier formats (FedEx 12/15/20, USPS 20-22) are already safe,
+# because the phone pattern's trailing (?!\d) refuses to match a prefix of a longer run.
+_TRACKING = re.compile(r"\b1Z[0-9A-Z]{16}\b", re.IGNORECASE)
 _LONG_HEX = re.compile(r"\b[a-fA-F0-9]{32,}\b")
 
 
@@ -52,12 +57,23 @@ def is_sensitive(text: str) -> bool:
 
 def redact(text: str, limit: int = 4000) -> str:
     out = normalize(text)
+    # Hold tracking numbers aside so the phone rule cannot reach their digits, then put
+    # them back before any truncation can cut a placeholder in half.
+    held: List[str] = []
+
+    def _hold(match: "re.Match[str]") -> str:
+        held.append(match.group(0))
+        return f"\x00TRK{len(held) - 1}\x00"
+
+    out = _TRACKING.sub(_hold, out)
     out = _TOKEN_SHAPES.sub("[secret]", out)
     # Keep the variable's NAME (it is often the useful signal) and mask only its value.
     out = _SECRET_ASSIGNMENT.sub(lambda m: re.split(r"[:=]", m.group(0), 1)[0].rstrip() + "=[secret]", out)
     out = _LONG_HEX.sub("[hex]", out)
     out = _EMAIL.sub("[email]", out)
     out = _PHONE.sub("[phone]", out)
+    for index, value in enumerate(held):
+        out = out.replace(f"\x00TRK{index}\x00", value)
     if len(out) > limit:
         half = limit // 2
         out = out[:half] + "\n[…]\n" + out[-half:]

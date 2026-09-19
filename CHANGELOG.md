@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.1 (2026-09-19)
+
+An audit of the day's six commits, and the follow-up fixes none of them logged.
+
+- **`jev escalate` does not exist.** `jev-frontier-work` told agents to run it at three
+  separate places; the command was renamed to `jev ladder` and the skill was never
+  updated. In a repo whose premise is "an agent reads a SKILL.md and acts", an agent that
+  loaded that skill errored three times with no way to discover the real name. Fixed, and
+  a test now asserts every `jev <subcommand>` in every skill is a real subcommand — proven
+  by reintroducing the bug and watching it fail.
+- **A privacy fix that traded one silent failure for another.** 0.9.0 stopped the phone
+  rule eating UPS tracking numbers by widening its lookbehind to exclude letters. That
+  stopped `x8505550134`, `ext8505550134` and `Phone8505550134` being redacted at all —
+  data loss swapped for a leak. The right fix protects the specific thing instead of
+  blunting the general rule: tracking numbers are held aside, the original phone rule runs
+  untouched, and they are restored before truncation. Both directions are tested now.
+- **The release guard passed without scanning anything.** Outside a git checkout
+  `check_release.py` printed `clean: 0 files` and exited 0. The repo is distributed as a
+  zip, so that case is real. A guard that cannot tell "clean" from "did not run" is worse
+  than no guard; it now exits non-zero and says so.
+- **Version drift.** Code said 0.8.0 while the changelog announced 0.9.0, so
+  `build_release.sh` would have shipped 0.9.0 code in an 0.8.0 zip.
+- **[`docs/turning-a-jev-feature-on.md`](docs/turning-a-jev-feature-on.md)** — the
+  operational rules behind all of the above: shadow first, benchmark your benchmark, a
+  config key that can default to "off" will, absence of errors proves nothing, prove it
+  where it runs, latency is the cost that lands on every turn, and ship the implementation
+  rather than only the loop.
+
 ## 0.9.0 (2026-09-19)
 
 Triage went into a live pipeline, and a continuity rule turned out to forbid what handoff was doing.
@@ -48,7 +76,7 @@ Two bugs found by testing a live deployment, both of which fail silently — the
 
 Frontier work: pick the seat, then watch the run.
 
-- **`jevkit/ladder.py` + `jev escalate`** — an escalation ladder for hard work across paid frontier seats. A refusal is written to shared state, so one lane hitting a quota teaches all the others instead of forty agents rediscovering the same 429. A rung is skipped, never silently downgraded: when everything is full the decision says `forced` out loud rather than quietly serving hard work from a cheap model. Only the `hard` tier reaches it.
+- **`jevkit/ladder.py` + `jev ladder`** — an escalation ladder for hard work across paid frontier seats. A refusal is written to shared state, so one lane hitting a quota teaches all the others instead of forty agents rediscovering the same 429. A rung is skipped, never silently downgraded: when everything is full the decision says `forced` out loud rather than quietly serving hard work from a cheap model. Only the `hard` tier reaches it.
 - **`jevkit/supervise.py` + `jev supervise`** — Jev watches delegated frontier runs. Code decides what is free to decide (has output arrived, is it repeating, has the process exited); Jev judges only what code cannot (is this meaningful progress, is it waiting on an answer, has it given up, is it finished); the expensive supervisor is woken only when one of those crosses a threshold. A Jev failure means keep waiting, never abort.
 - **Scheduled turns are now routed, not skipped.** A cron turn is a ~37,000-character standing contract wrapped around a `## Prompt` of ~660 characters — the instruction is 1% of the envelope, which is why judging the envelope escalated everything. `unwrap()` pulls out the ask. Routing cron turns *without* unwrapping costs +115%; with it, +6%, and genuinely demanding jobs still reach the hard tier. Recurring jobs repeat their instruction verbatim, so decisions cache: 247 cron runs held 5 distinct asks.
 - **Privacy gate fix**: `AWS_SECRET_ACCESS_KEY`, `DB_PASSWORD`, `GITHUB_TOKEN` and other env-var-style secrets were not caught, because the pattern only matched `secret_key` — the revealing word sits in the middle of the name. Found by a supervisor test; it affected every module.

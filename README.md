@@ -9,7 +9,8 @@ Give your agent a fast, cheap second brain for the small decisions.
 | **Model routing** | Which model is good enough for this turn, from every model you can call | ~0.4 s per turn |
 | **Memory** | Which retrieved passages are worth reading, and which contain hidden instructions | one request for up to 60 passages |
 | **Compaction and handoffs** | Which turns survive word for word, which get summarized, which are dropped | 71 turns in 0.95 s |
-| **Skill selection** | Which installed skill this turn needs, or none | 373 skills in ~0.9 s |
+| **Skill selection** | Which installed skill this turn needs, or none | 377 skills in ~2.8 s; acknowledgements answered locally for free |
+| **Triage** | How urgent a message is, what kind it is, and whether a person must see it | ~0.4 s per message, $0.00006 |
 | **Computer use** | The next GUI action, from a table of actions you already judged safe | ~0.4 s per step |
 | **Browser use** | The next page action, same contract | ~0.4 s per step |
 
@@ -96,13 +97,20 @@ Safety rails that do not depend on Jev being right: risk words (production, dele
 
 ```
 jevkit/          the library and the `jev` command (stdlib only)
-skills/          seven SKILL.md skills, agent-agnostic
+skills/          eight SKILL.md skills, agent-agnostic
 hermes/plugin/   the Hermes plugin
 router-dashboard/  the model routing page (`jev dashboard`)
 install.py       installer / uninstaller
 tests/           offline tests, every Jev reply faked
-docs/            integration notes
+docs/            integration notes and hard-won operational lessons
 ```
+
+| Doc | Read it when |
+|---|---|
+| [turning-a-jev-feature-on.md](docs/turning-a-jev-feature-on.md) | **Before you enable anything.** Shadow mode, silent defaults, why a quiet log proves nothing, and bounding by the clock rather than the count. |
+| [measuring-a-router.md](docs/measuring-a-router.md) | Replaying routing against your own traffic before you trust the savings. |
+| [wiring-triage-into-a-live-pipeline.md](docs/wiring-triage-into-a-live-pipeline.md) | Adding classification to something already carrying real traffic. |
+| [hermes-compaction.md](docs/hermes-compaction.md) | Compaction and handoff on Hermes specifically. |
 
 ```bash
 python3 -m unittest discover -s tests

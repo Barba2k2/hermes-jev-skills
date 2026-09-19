@@ -13,7 +13,15 @@ PATTERNS = {
 }
 ALLOW = {("tests/test_jevkit.py", "api key")}  # the fake key built at runtime never matches; listed for clarity
 
-files = subprocess.run(["git", "ls-files", "-co", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+_git = subprocess.run(["git", "ls-files", "-co", "--exclude-standard"],
+                      cwd=ROOT, capture_output=True, text=True)
+files = _git.stdout.split()
+# A guard that cannot tell "clean" from "did not run" is worse than no guard: outside a
+# git checkout this printed "clean: 0 files" and exited 0, giving a green light to a
+# check that scanned nothing. The repo is distributed as a zip, so that case is real.
+if _git.returncode != 0 or not files:
+    sys.exit("check_release: nothing was scanned (not a git checkout, or git failed). "
+             "This is not a pass.")
 problems = []
 for name in files:
     path = ROOT / name
