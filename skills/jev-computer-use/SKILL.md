@@ -52,6 +52,27 @@ If the driver, the key or the target is unavailable: stop and say what is missin
 
 `jev choose --mock` answers `reobserve` with no network call, for testing your loop.
 
+## Bundled runner
+
+The loop above is the contract. `scripts/jev_gui_agent.py` is a working implementation of it —
+the desktop counterpart to `jev-browser-use`'s runner — so you do not have to rebuild the
+observe/choose/act cycle by hand:
+
+```bash
+python3 <this skill>/scripts/jev_gui_agent.py \
+  --pid 26955 --window-id 46041 \
+  --goal 'Open the Library page in YouTube Music' \
+  --expect 'Library' --max-steps 12 --json
+```
+
+It drives `cua-driver` over MCP, builds the candidate table from the accessibility tree, sends
+`jev.action_choice_request_v1`, and performs only the action behind the returned id. Exit 0
+verified, 4 unverified, 2 refused to start, 6 abstained. `--max-regions` defaults to 26 so the
+table stays inside the 32-candidate contract once `reobserve` and `abstain` are added.
+
+If you cannot run it, fall back to the loop above by hand — but do **not** fall back to
+AppleScript UI scripting, `xdotool` or coordinate clicking. Stop and say what is missing.
+
 ## Managed fleets
 
 This skill is the *loop*. Machine-specific runtime — which driver binary to start, how it is

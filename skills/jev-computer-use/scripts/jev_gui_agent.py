@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -50,7 +51,28 @@ except Exception:  # noqa: BLE001
         return False
 
 
-CUA = os.environ.get("CUA_DRIVER_BIN", "/Users/vibex/.local/bin/cua-driver")
+def _find_driver() -> str:
+    """Locate cua-driver without baking anyone's home directory into the repo.
+
+    A hardcoded /Users/<someone>/ path is both wrong on every other machine and blocked
+    by scripts/check_release.py, which is the gate that keeps fleet-specific runtime out
+    of the public skill. Order: explicit override, PATH, then the usual install sites.
+    """
+    override = os.environ.get("CUA_DRIVER_BIN")
+    if override:
+        return override
+    found = shutil.which("cua-driver")
+    if found:
+        return found
+    for candidate in (Path.home() / ".local" / "bin" / "cua-driver",
+                      Path("/Applications/CuaDriver.app/Contents/MacOS/cua-driver"),
+                      Path("/usr/local/bin/cua-driver")):
+        if candidate.exists():
+            return str(candidate)
+    return "cua-driver"      # let the failure name the missing binary
+
+
+CUA = _find_driver()
 
 INTERACTIVE_ROLES = {
     "AXButton", "AXLink", "AXTextField", "AXCheckBox", "AXRadioButton",
