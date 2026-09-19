@@ -19,7 +19,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 from . import keystore
 
 ENDPOINT = "https://api.typesafe.ai/v1/systemone"
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_KEY_ENDPOINT = "https://openrouter.ai/api/v1/key"
 DEFAULT_MODEL = "jev-latest"
+DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini"
 MAX_RESPONSE_BYTES = 1_000_000
 MAX_STATE_CHARS = 60_000
 USER_AGENT = "hermes-jev-skills/0.1"
@@ -64,6 +67,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _http_transport(body: bytes, headers: Dict[str, str], timeout: float) -> bytes:
     request = urllib.request.Request(ENDPOINT, data=body, headers=headers, method="POST")
+    return _open(request, timeout)
+
+
+def _open(request: urllib.request.Request, timeout: float) -> bytes:
     opener = urllib.request.build_opener(_NoRedirect)
     try:
         with opener.open(request, timeout=timeout) as response:
@@ -77,6 +84,33 @@ def _http_transport(body: bytes, headers: Dict[str, str], timeout: float) -> byt
     if len(raw) > MAX_RESPONSE_BYTES:
         raise JevError("response_too_large")
     return raw
+
+
+def _openrouter_transport(body: bytes, headers: Dict[str, str], timeout: float) -> bytes:
+    request = urllib.request.Request(OPENROUTER_ENDPOINT, data=body, headers=headers, method="POST")
+    raw = _open(request, timeout)
+    try:
+        payload = json.loads(raw)
+        content = payload["choices"][0]["message"]["content"]
+        if isinstance(content, list):
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        normalized = json.loads(content)
+    except (KeyError, IndexError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        raise JevError("malformed", "OpenRouter reply has no JSON answer") from None
+    return json.dumps(normalized, separators=(",", ":")).encode("utf-8")
+
+
+def _openrouter_key_valid(api_key: str, timeout: float) -> bool:
+    request = urllib.request.Request(
+        OPENROUTER_KEY_ENDPOINT,
+        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json", "User-Agent": USER_AGENT},
+        method="GET",
+    )
+    try:
+        payload = json.loads(_open(request, timeout))
+    except (JevError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and isinstance(payload.get("data"), dict)
 
 
 _RETRYABLE = {"rate_limited", "overloaded", "network", "http_500", "http_502", "http_503", "http_504"}
@@ -138,6 +172,7 @@ def ask(
     retries: int = 1,
     model: Optional[str] = None,
     api_key: Optional[str] = None,
+    provider: Optional[str] = None,
     transport: Optional[Transport] = None,
 ) -> Dict[str, Any]:
     """Ask Jev every question against one state, in a single request.
@@ -148,20 +183,42 @@ def ask(
     """
     if not questions:
         raise ValueError("no questions")
-    key = api_key or keystore.resolve()
+    key = api_key or keystore.resolve(provider)
     if not key:
-        raise JevError("no_key", "run `jev setup-key`")
+        raise JevError("no_key", "run `jev setup-key` or configure OPENROUTER_API_KEY")
+    selected_provider = provider or ("openrouter" if key.startswith("sk-or-") else ("typesafe" if api_key else keystore.resolve_provider()))
+    if selected_provider not in ("typesafe", "openrouter"):
+        raise JevError("unknown_provider")
     encoded_state = state if isinstance(state, str) else json.dumps(state, separators=(",", ":"), default=str)
     if len(encoded_state) > MAX_STATE_CHARS:
         raise JevError("state_too_large")
-    body = json.dumps(
-        {"state": state, "model": model or os.environ.get("TYPESAFE_MODEL") or DEFAULT_MODEL,
-         "questions": {name: dict(q) for name, q in questions.items()}},
-        separators=(",", ":"), default=str,
-    ).encode("utf-8")
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
-               "Accept": "application/json", "User-Agent": USER_AGENT}
-    send = transport or _http_transport
+    if selected_provider == "openrouter":
+        prompt = (
+            "Return ONLY valid JSON with keys answers and usage. Preserve the answer schema exactly.\n"
+            f"STATE:\n{json.dumps(state, default=str)}\nQUESTIONS:\n{json.dumps(questions, default=str)}"
+        )
+        body = json.dumps({
+            "model": model or os.environ.get("OPENROUTER_JEV_MODEL") or DEFAULT_OPENROUTER_MODEL,
+            "messages": [
+                {"role": "system", "content": "You are a typed decision model. Follow the supplied question schemas exactly."},
+                {"role": "user", "content": prompt},
+            ],
+            "response_format": {"type": "json_object"},
+        }, separators=(",", ":")).encode("utf-8")
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                   "Accept": "application/json", "User-Agent": USER_AGENT,
+                   "HTTP-Referer": "https://github.com/kerpopule/hermes-jev-skills",
+                   "X-Title": "Hermes Jev Skills"}
+        send = transport or _openrouter_transport
+    else:
+        body = json.dumps(
+            {"state": state, "model": model or os.environ.get("TYPESAFE_MODEL") or DEFAULT_MODEL,
+             "questions": {name: dict(q) for name, q in questions.items()}},
+            separators=(",", ":"), default=str,
+        ).encode("utf-8")
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                   "Accept": "application/json", "User-Agent": USER_AGENT}
+        send = transport or _http_transport
 
     started = time.monotonic()
     attempt = 0
@@ -190,11 +247,13 @@ def ask(
     return {"answers": checked, "usage": usage, "latency_ms": int((time.monotonic() - started) * 1000)}
 
 
-def verify_key(api_key: str, timeout: float = 10.0) -> bool:
-    """One tiny synthetic call. True means the key is accepted."""
+def verify_key(api_key: str, provider: Optional[str] = None, timeout: float = 10.0) -> bool:
+    """Validate credentials without spending a model request."""
     try:
+        if provider == "openrouter":
+            return _openrouter_key_valid(api_key, timeout)
         ask("The build finished and all tests passed.",
-            {"ok": noul("The text reports a successful outcome")}, api_key=api_key, timeout=timeout)
+            {"ok": noul("The text reports a successful outcome")}, api_key=api_key, provider=provider, timeout=timeout)
         return True
     except JevError:
         return False

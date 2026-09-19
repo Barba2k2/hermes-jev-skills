@@ -70,6 +70,28 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(sent["headers"]["Authorization"], "Bearer " + KEY)
         self.assertEqual(set(sent["request"]), {"state", "model", "questions"})
 
+    def test_openrouter_key_selects_openrouter_request(self):
+        calls = []
+
+        def transport(body, headers, timeout):
+            calls.append((json.loads(body), headers))
+            return json.dumps({"answers": {"q": {"type": "noul", "noul": 0.7}}, "usage": {}}).encode()
+
+        reply = client.ask("state", {"q": client.noul("x")}, api_key="sk-or-" + "a" * 40,
+                           transport=transport, timeout=2)
+        self.assertEqual(reply["answers"]["q"]["noul"], 0.7)
+        request, headers = calls[0]
+        self.assertEqual(request["model"], client.DEFAULT_OPENROUTER_MODEL)
+        self.assertEqual(headers["Authorization"], "Bearer sk-or-" + "a" * 40)
+        self.assertEqual(request["response_format"], {"type": "json_object"})
+
+    def test_openrouter_key_verification_uses_key_endpoint(self):
+        with mock.patch.object(client, "_open", return_value=b'{"data":{"label":"test"}}') as opened:
+            self.assertTrue(client.verify_key("sk-or-" + "a" * 40, provider="openrouter"))
+        request, timeout = opened.call_args.args
+        self.assertEqual(request.full_url, client.OPENROUTER_KEY_ENDPOINT)
+        self.assertEqual(request.get_header("Authorization"), "Bearer sk-or-" + "a" * 40)
+
     def test_rejects_option_that_was_not_offered(self):
         t = fake(lambda n, q, s: {"type": "choice", "choice": "rm -rf", "confidence": 1, "probabilities": {}})
         with self.assertRaises(client.JevError):

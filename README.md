@@ -40,11 +40,13 @@ jev setup-key
 
 The installer finds Hermes, Claude Code and Codex on the machine and installs for each one it finds. `python3 install.py --check` shows what it would do without changing anything; `--uninstall` reverses it.
 
+Jev is a structured decision model, not a chat model. It receives a state and typed questions, then returns calibrated `noul`, `choice` or `score` answers. The caller owns the workflow and acts on those answers; use it for routing, ranking and verification, not text generation.
+
 ## Your API key never touches the agent
 
-`jev setup-key` opens a one-time page served only by your own computer. You paste your [TypeSafe key](https://console.typesafe.ai/settings/keys) there. It goes straight into the OS secret store (macOS Keychain, or `secret-tool` on Linux, or a 0600 file as a last resort) and, on a Hermes machine, into each profile's `.env`. The agent that ran the command sees one line: stored, verified, yes or no. Never the key, not even a prefix.
+`jev setup-key` asks for the selected provider key in a hidden terminal prompt. Use `--provider openrouter` for an OpenRouter key. The key is never placed in a URL or sent through a browser.
 
-The page lives on an unguessable one-time URL, refuses requests with a foreign `Host` header (DNS rebinding), sends no referrer, logs nothing, and shuts down after one use or ten minutes. On a headless box, run `jev setup-key --tty` yourself for a hidden prompt.
+There is no browser flow. The prompt is hidden; the key is never echoed.
 
 **Do not paste your key into a chat.** If you already did, make a new one.
 

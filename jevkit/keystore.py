@@ -18,8 +18,12 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-ENV_VAR = "TYPESAFE_API_KEY"
-KEYCHAIN_SERVICE = "Hermes TypeSafe API"
+PROVIDERS = {
+    "typesafe": {"env": "TYPESAFE_API_KEY", "service": "Hermes TypeSafe API"},
+    "openrouter": {"env": "OPENROUTER_API_KEY", "service": "Hermes OpenRouter API"},
+}
+ENV_VAR = PROVIDERS["typesafe"]["env"]
+KEYCHAIN_SERVICE = PROVIDERS["typesafe"]["service"]
 KEYCHAIN_ACCOUNT = ENV_VAR
 _SECURITY = "/usr/bin/security"
 
@@ -37,11 +41,13 @@ def looks_like_key(value: str) -> bool:
 
 # ── read ─────────────────────────────────────────────────────────────────────
 
-def _from_keychain() -> Optional[str]:
+def _from_keychain(provider: str = "typesafe") -> Optional[str]:
+    spec = PROVIDERS[provider]
+    service, account = spec["service"], spec["env"]
     if sys.platform == "darwin" and os.path.exists(_SECURITY):
-        cmd = [_SECURITY, "find-generic-password", "-w", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT]
+        cmd = [_SECURITY, "find-generic-password", "-w", "-s", service, "-a", account]
     elif shutil.which("secret-tool"):
-        cmd = ["secret-tool", "lookup", "service", KEYCHAIN_SERVICE, "account", KEYCHAIN_ACCOUNT]
+        cmd = ["secret-tool", "lookup", "service", service, "account", account]
     else:
         return None
     try:
@@ -52,34 +58,61 @@ def _from_keychain() -> Optional[str]:
     return value if proc.returncode == 0 and value else None
 
 
-def _from_file() -> Optional[str]:
+def _from_file(provider: str = "typesafe") -> Optional[str]:
+    env_var = PROVIDERS[provider]["env"]
     path = credentials_file()
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
-            if line.startswith(ENV_VAR + "="):
+            if line.startswith(env_var + "="):
                 return line.split("=", 1)[1].strip() or None
     except OSError:
         return None
     return None
 
 
-def resolve() -> Optional[str]:
-    return (os.environ.get(ENV_VAR) or "").strip() or _from_keychain() or _from_file()
+def provider_names() -> List[str]:
+    return list(PROVIDERS)
 
 
-def source() -> str:
-    if (os.environ.get(ENV_VAR) or "").strip():
+def resolve(provider: Optional[str] = None) -> Optional[str]:
+    """Resolve a provider key; TypeSafe wins when no provider is specified."""
+    names = [provider] if provider else ["typesafe", "openrouter"]
+    for name in names:
+        if name not in PROVIDERS:
+            raise ValueError(f"unknown provider: {name}")
+        env_var = PROVIDERS[name]["env"]
+        value = (os.environ.get(env_var) or "").strip() or _from_keychain(name) or _from_file(name)
+        if value:
+            return value
+    return None
+
+
+def resolve_provider(provider: Optional[str] = None) -> Optional[str]:
+    names = [provider] if provider else ["typesafe", "openrouter"]
+    for name in names:
+        if resolve(name):
+            return name
+    return None
+
+
+def source(provider: Optional[str] = None) -> str:
+    name = provider or resolve_provider()
+    if not name:
+        return "absent"
+    env_var = PROVIDERS[name]["env"]
+    if (os.environ.get(env_var) or "").strip():
         return "environment"
-    if _from_keychain():
+    if _from_keychain(name):
         return "os-secret-store"
-    if _from_file():
+    if _from_file(name):
         return "credentials-file"
     return "absent"
 
 
-def describe() -> Dict[str, object]:
-    key = resolve()
-    return {"present": bool(key), "source": source(), "length": len(key) if key else 0}
+def describe(provider: Optional[str] = None) -> Dict[str, object]:
+    name = provider or resolve_provider()
+    key = resolve(name) if name else None
+    return {"present": bool(key), "provider": name, "source": source(name), "length": len(key) if key else 0}
 
 
 # ── write ────────────────────────────────────────────────────────────────────
@@ -95,16 +128,17 @@ def _write_private(path: Path, text: str) -> None:
     os.replace(temp, path)
 
 
-def upsert_env_file(path: Path, value: str) -> None:
-    """Set ENV_VAR in a dotenv file, leaving every other line untouched."""
+def upsert_env_file(path: Path, value: str, provider: str = "typesafe") -> None:
+    """Set the selected provider variable in a dotenv file."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         lines = []
-    entry = f"{ENV_VAR}={value}"
+    env_var = PROVIDERS[provider]["env"]
+    entry = f"{env_var}={value}"
     replaced = False
     for index, line in enumerate(lines):
-        if line.startswith(ENV_VAR + "="):
+        if line.startswith(env_var + "="):
             lines[index] = entry
             replaced = True
     if not replaced:
@@ -112,15 +146,15 @@ def upsert_env_file(path: Path, value: str) -> None:
     _write_private(path, "\n".join(lines) + "\n")
 
 
-def _store_keychain(value: str) -> bool:
+def _store_keychain(value: str, provider: str = "typesafe") -> bool:
+    service, account = PROVIDERS[provider]["service"], PROVIDERS[provider]["env"]
     if sys.platform == "darwin" and os.path.exists(_SECURITY):
         # `security` has no stdin mode for the secret, so it is briefly an argv entry
         # of a child we own. The alternative (no secret store at all) is worse.
-        cmd = [_SECURITY, "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w", value]
+        cmd = [_SECURITY, "add-generic-password", "-U", "-s", service, "-a", account, "-w", value]
         stdin = None
     elif shutil.which("secret-tool"):
-        cmd = ["secret-tool", "store", "--label", KEYCHAIN_SERVICE, "service", KEYCHAIN_SERVICE,
-               "account", KEYCHAIN_ACCOUNT]
+        cmd = ["secret-tool", "store", "--label", service, "service", service, "account", account]
         stdin = value
     else:
         return False
@@ -143,20 +177,22 @@ def hermes_env_files(hermes_home: Optional[Path] = None) -> List[Path]:
     return files
 
 
-def store(value: str, hermes: bool = True, hermes_home: Optional[Path] = None) -> Dict[str, object]:
-    """Persist the key. Returns where it went, never the key itself."""
+def store(value: str, hermes: bool = True, hermes_home: Optional[Path] = None, provider: str = "typesafe") -> Dict[str, object]:
+    """Persist a provider key. Returns where it went, never the key itself."""
     value = value.strip()
+    if provider not in PROVIDERS:
+        raise ValueError(f"unknown provider: {provider}")
     if not looks_like_key(value):
         raise ValueError("that does not look like an API key")
     written: List[str] = []
-    if _store_keychain(value):
+    if _store_keychain(value, provider):
         written.append("os-secret-store")
     else:
-        upsert_env_file(credentials_file(), value)
+        upsert_env_file(credentials_file(), value, provider)
         written.append(str(credentials_file()))
     lanes = 0
     if hermes:
         for env_file in hermes_env_files(hermes_home):
-            upsert_env_file(env_file, value)
+            upsert_env_file(env_file, value, provider)
             lanes += 1
     return {"stored_in": written, "hermes_env_files": lanes, "length": len(value)}

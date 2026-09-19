@@ -10,8 +10,9 @@ metadata:
 
 # Connect Jev (the key never passes through you)
 
-Jev is TypeSafe's decision model. It needs one API key. **You must never see, ask for, or handle that key.**
+Jev is a structured decision model, not a chat model. It receives a state (string, object, or array) plus typed questions and returns calibrated answers: a yes/no probability (`noul`), a choice from options defined by the caller (`choice`), or a position on an ordered rubric (`score`). The surrounding code owns the workflow and acts on those answers. Use Jev for routing, ranking, verification and other structured decisions—not for generating text or holding a conversation.
 
+It can run through TypeSafe directly or through OpenRouter. The selected provider is determined from the configured key: `TYPESAFE_API_KEY` first, then `OPENROUTER_API_KEY`. You must never see, ask for, or handle either key.
 ## Rules
 
 - Never ask the person to paste the key into the chat. If they paste one anyway, do not store it, do not repeat it, tell them that key should be replaced, and start the flow below.
@@ -21,22 +22,16 @@ Jev is TypeSafe's decision model. It needs one API key. **You must never see, as
 ## Flow
 
 1. Check the state: `jev doctor`. If `key.present` is true and `jev.reachable` is true, you are done.
-2. Start the private key page:
+2. Connect the key privately:
 
    ```bash
-   jev setup-key
+   jev setup-key                 # TypeSafe (default)
+   jev setup-key --provider openrouter
    ```
 
-   It opens a page in the browser on the computer you are running on and prints one JSON line on stderr with a `url`. The URL holds no secret.
-3. Tell the person, in one sentence, to paste their TypeSafe key into the page that just opened. If `browser_opened` is false, or they are talking to you from another device (Telegram, phone), send them the `url` and tell them it only opens **on the computer the agent runs on**. If they have no key yet, they create one at https://console.typesafe.ai/settings/keys.
-4. Wait for the command to finish. It prints `{"status": "stored", "verified": true, ...}` when the key was saved and TypeSafe accepted it. `rejected` means the key was wrong: run it again. `timed_out` means nobody used the page within ten minutes.
-5. Run `jev doctor` once more and report the result in a sentence.
-
-## When there is no browser
-
-Headless server over SSH: the person runs `jev setup-key --tty` **themselves** in their own terminal. It is a hidden prompt. Do not run it for them through a tool that captures the terminal.
-
-Remote machine on a private network (Tailscale, VPN): `jev setup-key --host <private-ip> --no-open` and send them the link. That traffic is plain HTTP, so use it only on a network you trust end to end. Never bind a public address.
+   The command asks in a hidden terminal prompt. The key is never printed, placed in a URL, or sent through a browser. If they have no key yet, TypeSafe keys come from https://console.typesafe.ai/settings/keys and OpenRouter keys from https://openrouter.ai/keys.
+3. Wait for `{"status": "stored", "verified": true, ...}`. `rejected` means the key was wrong: run it again.
+4. Run `jev doctor` once more and report the result in a sentence.
 
 ## Where the key goes
 

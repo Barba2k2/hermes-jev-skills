@@ -39,12 +39,8 @@ def _skill_roots(extra: List[str]) -> List[Path]:
 
 def cmd_setup_key(args: argparse.Namespace) -> int:
     hermes_home = Path(args.hermes_home).expanduser() if args.hermes_home else None
-    common = {"verify": not args.no_verify, "hermes": not args.no_hermes, "hermes_home": hermes_home}
-    if args.tty:
-        result = key_setup.run_tty(**common)
-    else:
-        result = key_setup.run_browser(host=args.host, port=args.port, timeout=args.timeout,
-                                       open_browser=not args.no_open, **common)
+    common = {"provider": args.provider, "verify": not args.no_verify, "hermes": not args.no_hermes, "hermes_home": hermes_home}
+    result = key_setup.run_tty(**common)
     _out(result)
     return 0 if result.get("status") == "stored" else 1
 
@@ -250,12 +246,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("setup-key", help="open a private page for the person to paste their TypeSafe key")
-    p.add_argument("--tty", action="store_true", help="hidden terminal prompt instead of a browser page")
-    p.add_argument("--host", default="127.0.0.1", help="bind address; keep loopback unless you are on a private network")
-    p.add_argument("--port", type=int, default=0)
-    p.add_argument("--timeout", type=float, default=600)
-    p.add_argument("--no-open", action="store_true", help="do not try to open a browser; just print the link")
+    p = sub.add_parser("setup-key", help="connect a TypeSafe or OpenRouter API key")
+    p.add_argument("--provider", choices=keystore.provider_names(), default="typesafe")
+    p.add_argument("--tty", action="store_true", help="hidden terminal prompt (the only key-entry mode)")
     p.add_argument("--no-verify", action="store_true")
     p.add_argument("--no-hermes", action="store_true", help="do not write the key into Hermes lane .env files")
     p.add_argument("--hermes-home")

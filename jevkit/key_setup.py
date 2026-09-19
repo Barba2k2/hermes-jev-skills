@@ -24,7 +24,10 @@ from urllib.parse import parse_qs
 
 from . import client, keystore
 
-KEYS_URL = "https://console.typesafe.ai/settings/keys"
+KEYS_URLS = {
+    "typesafe": "https://console.typesafe.ai/settings/keys",
+    "openrouter": "https://openrouter.ai/keys",
+}
 MAX_BODY = 4096
 
 _PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -44,14 +47,14 @@ button{margin-top:16px;width:100%;padding:12px;border:0;border-radius:9px;backgr
 </style></head><body><main>__BODY__</main></body></html>"""
 
 _FORM = """<h1>Connect Jev</h1>
-<p>Paste your TypeSafe API key. It goes from this page straight into this computer's secret store.
+<p>Paste your __PROVIDER__ API key. It goes from this page straight into this computer's secret store.
 Your AI agent never sees it.</p>
 __ERROR__
 <form method="post" autocomplete="off">
-<label for="k">TypeSafe API key</label>
+<label for="k">__PROVIDER__ API key</label>
 <input id="k" name="key" type="password" required autofocus autocomplete="off" spellcheck="false">
 <button type="submit">Save key</button></form>
-<p class="note">No key yet? Create one at <a href="__KEYS__" target="_blank" rel="noreferrer noopener">console.typesafe.ai</a>.
+<p class="note">No key yet? Create one at <a href="__KEYS__" target="_blank" rel="noreferrer noopener">the provider key page</a>.
 This page is served only by your own machine and closes after one use.</p>"""
 
 _DONE = """<h1 class="ok">Jev is connected</h1>
@@ -62,19 +65,25 @@ def _render(body: str) -> bytes:
     return _PAGE.replace("__BODY__", body).encode("utf-8")
 
 
-def _finish(key: str, verify: bool, hermes: bool, hermes_home: Optional[Path]) -> Dict[str, Any]:
-    verified: Optional[bool] = client.verify_key(key) if verify else None
+def _finish(key: str, provider: str, verify: bool, hermes: bool, hermes_home: Optional[Path]) -> Dict[str, Any]:
+    verified: Optional[bool] = client.verify_key(key, provider=provider) if verify else None
     if verified is False:
-        return {"status": "rejected", "reason": "TypeSafe did not accept that key"}
-    result = keystore.store(key, hermes=hermes, hermes_home=hermes_home)
+        return {"status": "rejected", "reason": f"{provider} did not accept that key"}
+    if provider == "typesafe":
+        result = keystore.store(key, hermes=hermes, hermes_home=hermes_home)
+    else:
+        result = keystore.store(key, provider=provider, hermes=hermes, hermes_home=hermes_home)
     result.update({"status": "stored", "verified": verified})
     return result
 
 
 def run_browser(
     *, host: str = "127.0.0.1", port: int = 0, timeout: float = 600.0, open_browser: bool = True,
+    provider: str = "typesafe",
     verify: bool = True, hermes: bool = True, hermes_home: Optional[Path] = None,
 ) -> Dict[str, Any]:
+    if provider not in KEYS_URLS:
+        raise ValueError(f"unknown provider: {provider}")
     token = secrets.token_urlsafe(24)
     outcome: Dict[str, Any] = {}
     done = threading.Event()
@@ -110,7 +119,7 @@ def run_browser(
             if not self._allowed() or done.is_set():
                 self._send(404, _render("<h1>Not found</h1>"))
                 return
-            self._send(200, _render(_FORM.replace("__ERROR__", "").replace("__KEYS__", KEYS_URL)))
+            self._send(200, _render(_FORM.replace("__ERROR__", "").replace("__KEYS__", KEYS_URLS[provider]).replace("__PROVIDER__", provider.title())))
 
         def do_POST(self) -> None:  # noqa: N802
             if not self._allowed() or done.is_set():
@@ -123,14 +132,14 @@ def run_browser(
             fields = parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
             key = (fields.get("key") or [""])[0].strip()
             try:
-                result = _finish(key, verify, hermes, hermes_home)
+                result = _finish(key, provider, verify, hermes, hermes_home)
             except ValueError as error:
                 result = {"status": "rejected", "reason": str(error)}
             if result["status"] != "stored":
                 message = f'<p class="bad">{html.escape(str(result["reason"]))}. Try again.</p>'
-                self._send(200, _render(_FORM.replace("__ERROR__", message).replace("__KEYS__", KEYS_URL)))
+                self._send(200, _render(_FORM.replace("__ERROR__", message).replace("__KEYS__", KEYS_URLS[provider]).replace("__PROVIDER__", provider.title())))
                 return
-            note = " and checked with TypeSafe" if result.get("verified") else ""
+            note = f" and checked with {provider.title()}" if result.get("verified") else ""
             self._send(200, _render(_DONE.replace("__VERIFIED__", note)))
             outcome.update(result)
             done.set()
@@ -165,11 +174,13 @@ def run_browser(
     return outcome if finished else {"status": "timed_out"}
 
 
-def run_tty(*, verify: bool = True, hermes: bool = True, hermes_home: Optional[Path] = None) -> Dict[str, Any]:
+def run_tty(*, provider: str = "typesafe", verify: bool = True, hermes: bool = True, hermes_home: Optional[Path] = None) -> Dict[str, Any]:
+    if provider not in KEYS_URLS:
+        return {"status": "rejected", "reason": f"unknown provider: {provider}"}
     if not sys.stdin.isatty():
         return {"status": "rejected", "reason": "no terminal; use the browser flow"}
-    key = getpass.getpass("TypeSafe API key (hidden): ").strip()
+    key = getpass.getpass(f"{provider.title()} API key (hidden): ").strip()
     try:
-        return _finish(key, verify, hermes, hermes_home)
+        return _finish(key, provider, verify, hermes, hermes_home)
     except ValueError as error:
         return {"status": "rejected", "reason": str(error)}
