@@ -1397,3 +1397,54 @@ class TrackingNumberRedactionTests(unittest.TestCase):
 
     def test_an_order_number_is_not_mistaken_for_a_phone(self):
         self.assertIn("PO44812", privacy.redact("See PO44812 for details"))
+
+
+class TrivialTurnGateTests(unittest.TestCase):
+    """Most turns in a chat are "ok" and "thanks". Asking a 377-skill catalog about
+    those costs a ~2.8s round trip on exactly the turns a person notices latency on,
+    and the answer is always "no skill". This gate answers them locally, for free.
+
+    The asymmetry matters: a wrong SKIP makes the feature quietly do nothing, while a
+    wrong ASK costs half a cent. So the vocabulary stays narrow and anything unknown
+    goes to Jev.
+    """
+
+    TRIVIAL = ["ok", "okay", "yes", "yep", "no", "nope", "thanks", "thank you", "cheers",
+               "cool", "got it", "gotcha", "never mind", "nvm", "hi", "hey", "hey what's up",
+               "yes go ahead", "sure, go ahead", "thanks, that worked", "yeah that works",
+               "ok cool thanks", "no worries", "all done", "of course", "alright then",
+               "hmm", "stop", "please do", "👍", "...", "", "   "]
+
+    REAL = ["open settings", "rename the file", "Open the Settings app and turn on Night Shift.",
+            "Go to wikipedia and read the article", "route this turn",
+            "escalate to a frontier model", "what time is my next meeting?",
+            "who is Suzanne again?", "fix the printer dialog", "summarise this conversation",
+            "no, use the other browser profile instead", "no, the other one",
+            "stop the gateway service", "go to the settings page", "whats the status"]
+
+    def test_acknowledgements_never_reach_jev(self):
+        for turn in self.TRIVIAL:
+            self.assertTrue(skillpick.looks_trivial(turn), repr(turn))
+
+    def test_anything_that_might_be_a_request_still_reaches_jev(self):
+        for turn in self.REAL:
+            self.assertFalse(skillpick.looks_trivial(turn), repr(turn))
+
+    def test_length_is_not_the_test(self):
+        """"open settings" is shorter than "yes go ahead" and means far more."""
+        self.assertFalse(skillpick.looks_trivial("open settings"))
+        self.assertTrue(skillpick.looks_trivial("yes go ahead"))
+
+    def test_a_skipped_turn_makes_no_network_call(self):
+        calls = []
+
+        def transport(payload, timeout):        # must never be reached
+            calls.append(payload)
+            raise AssertionError("trivial turn was sent to Jev")
+
+        out = skillpick.pick("ok thanks", [{"name": "x", "description": "y", "path": "p"}],
+                             transport=transport)
+        self.assertEqual(out["skills"], [])
+        self.assertEqual(out.get("skipped"), "trivial")
+        self.assertEqual(out["latency_ms"], 0)
+        self.assertEqual(calls, [])

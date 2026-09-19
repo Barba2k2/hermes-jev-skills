@@ -51,10 +51,49 @@ def discover(roots: Iterable[Path], disabled: Iterable[str] = ()) -> List[Dict[s
     return list(seen.values())[:MAX_SKILLS]
 
 
+# Turns that cannot be asking for a specialised procedure. "ok", "yes go ahead",
+# "thanks, that worked" — the answer is always "no skill", and asking costs the whole
+# round trip on the very turns a person notices latency most. Deliberately narrow: an
+# imperative like "open settings" is only three words, so length alone is not the test.
+_ACK_WORDS = frozenset("""
+yes yeah yep yup no nope nah ok okay k sure certainly definitely absolutely
+thanks thank ta cheers cool nice great perfect lovely brilliant awesome excellent
+got gotcha understood right correct exactly agreed fine good you
+please do it that this them go ahead going ahead continue carry on keep
+stop wait hold never mind nvm hi hey hello yo hiya morning afternoon evening night
+bye later cya lol haha hah hmm hm huh oh ah sorry my bad np worked works working
+up now then again too also and but so well ready done all set
+whats thats its worries worry problem prob course of indeed alright
+""".split())
+
+
+def looks_trivial(turn: str) -> bool:
+    """True when no catalog could help, decided locally and for free.
+
+    Every word has to be an acknowledgement word. Length is not the test: "open
+    settings" is two words and is a real request, while "yes go ahead" is three and is
+    not. Anything carrying a word this vocabulary does not know goes to Jev — the safe
+    direction is asking, because a missed suggestion is invisible and a wrong skip is a
+    feature that quietly does nothing.
+    """
+    text = (turn or "").strip()
+    if not text:
+        return True
+    words = [w.replace("'", "") for w in re.split(r"[^A-Za-z']+", text.lower())]
+    words = [w for w in words if w]
+    if not words:
+        return True                       # punctuation or emoji only
+    if len(words) > 6:
+        return False                      # long enough to carry a real request
+    return all(w in _ACK_WORDS for w in words)
+
+
 def pick(
     turn: str, skills: List[Dict[str, str]], *, top_k: int = 3, need_threshold: float = 0.5,
     match_threshold: float = 0.5, timeout: float = 5.0, transport: Optional[client.Transport] = None,
 ) -> Dict[str, Any]:
+    if looks_trivial(turn):
+        return {"status": "ok", "needs_skill": 0.0, "skills": [], "latency_ms": 0, "skipped": "trivial"}
     if not skills or privacy.is_sensitive(turn):
         return {"status": "fail_open", "reason": "no skills" if not skills else "turn looks sensitive; not sent", "skills": []}
     catalog = skills[:MAX_SKILLS]
