@@ -2,8 +2,9 @@
 """Hermes model-routing dashboard.
 
 Reads every Hermes profile's model routing and lets you change it from a browser:
-per-use-case model dropdowns, a live split view, a change preview, and an Apply
-button that writes with a backup and verifies the read-back.
+per-use-case model dropdowns, Jev's tier x specialty pool grid, a live split view,
+a change preview, and an Apply button that writes with a backup and verifies the
+read-back.
 
 Safety defaults:
   * binds 127.0.0.1 unless --host is given explicitly;
@@ -137,6 +138,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/jev/switches":
             self._json(rs.jev_switch_state(self.cfg.hermes_home))
+            return
+        if path == "/api/jev/pools":
+            self._json(rs.jev_pools(self.cfg.hermes_home))
             return
         if path == "/api/jev/live":
             from urllib.parse import parse_qs

@@ -1,6 +1,6 @@
 ---
 name: jev-computer-use
-description: Use when operating a desktop GUI (windows, menus, native apps, OS dialogs) through a computer-use driver. You observe and build a table of safe actions; Jev picks the next one in about 0.4 seconds instead of a large model reasoning over every screenshot.
+description: Use when driving a desktop GUI through a computer-use driver — windows, menus, native apps, OS dialogs. You build a table of safe actions; Jev picks the next one in about 0.4 seconds.
 version: 0.1.0
 license: MIT
 metadata:

@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.10.0 (2026-09-19)
+
+- **The specialization axis was silently dead, and is restored.** Routing pools are two
+  dimensional — `tiers[tier][specialty]` — and `route` pays Jev for a Choice over
+  `general | coding | writing | research | vision` on every turn. But `suggest_tiers()`
+  had been reduced to emitting only `general` and `vision`, so `_pick` looked for the
+  `coding` pool, found none, and fell through to `general`. Nothing errored. The question
+  was asked and billed on every single turn and could not change a single answer. The
+  generator now produces a pool for every specialty, ordered by models that advertise the
+  skill in their own name — a hint only ever *orders* a pool, never filters it, so a band
+  with no specialist still routes.
+- **`route.dead_axis()` and a `jev doctor` warning.** A tier with no specialist pools is
+  now named out loud: "the question is asked and paid for on every turn and cannot change
+  the answer". This class of bug — a decision that is bought and discarded — is invisible
+  by construction, so it needs a check rather than an error.
+- **`jev doctor` no longer calls the privacy mode "mode".** It reports `privacy_mode`,
+  because the field read as the answer to "is routing on?" and has never been that.
+- **The installer shipped a plugin it could never install.** `hermes-handoff` — the subject
+  of four changelog entries — was unreachable because `install.py` hardcoded one plugin
+  name. Plugins and scripts are now discovered from the tree, installed, symlinked into
+  every profile and enabled together; `--uninstall` stays symmetric and leaves foreign
+  files alone.
+- **The installer stopped reporting success while installing nothing.** On a machine with
+  no Hermes, Claude Code or Codex it emitted success-shaped JSON and exit 0. It now says so
+  plainly and names `--skills-dir`. The PATH problem is a top-level `warning` too, because
+  the very next command the docs give you is the one that fails without it.
+- **All eight skill descriptions now fit the picker that reads them.** Every one exceeded
+  the 200-character budget `skillpick` truncates to, so each lost its distinguishing tail
+  before Jev ever ranked it — and the two delegation skills collapsed into near-identical
+  "delegate to another model" blurbs. Rewritten to front-load the discriminator, with a
+  test importing `DESCRIPTION_CHARS` so the repo cannot ship a skill its own picker cannot
+  read whole.
+- **The dashboard shows the axis instead of hiding it.** Pools render as a tier x specialty
+  grid where an empty pool is a visible gap, the live view credits the pool a model came
+  from (`medium / coding` versus `medium / general (fallback)`), and a dead axis is named
+  on the page in the same plain words `jev doctor` uses.
+
 ## 0.9.1 (2026-09-19)
 
 An audit of the day's six commits, and the follow-up fixes none of them logged.

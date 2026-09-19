@@ -1,6 +1,6 @@
 ---
 name: jev-frontier-work
-description: Use when a task is genuinely hard and deserves a frontier model, when handing work to another model or a long-running job, and while that delegated work runs. Picks which paid frontier seat takes it, and uses Jev to watch the run so you are only interrupted when something needs you.
+description: Use when a task is already judged hard — pick which paid frontier seat takes it, then keep Jev watching the delegated run so it interrupts you only when the run needs a decision.
 version: 0.1.0
 license: MIT
 metadata:

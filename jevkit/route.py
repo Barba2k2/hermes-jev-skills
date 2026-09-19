@@ -112,18 +112,57 @@ def _excluded(ref: str, patterns: List[str]) -> bool:
     return any(fnmatch.fnmatch(ref, pattern) or fnmatch.fnmatch(ref.split(":", 1)[1], pattern) for pattern in patterns)
 
 
+# A model that names its own specialty is telling you something the price band cannot.
+# Only used to ORDER a pool, never to exclude: a model with no hint still appears, just
+# after the ones that advertise the skill.
+_SPECIALTY_HINTS = {
+    "coding": ("code", "coder", "codestral", "devstral", "starcoder", "qwen2.5-coder"),
+    "writing": ("writer", "creative", "prose"),
+    "research": ("search", "sonar", "research", "deep-research", "grok"),
+}
+
+
 def suggest_tiers(rows: List[Dict[str, Any]], exclude: List[str], per_pool: int = 6) -> Dict[str, Dict[str, List[str]]]:
-    """A starting point from price bands. Pin your own picks in routing.json."""
+    """A starting point from price bands. Pin your own picks in routing.json.
+
+    Generates a pool for every specialty, not only general and vision. An earlier version
+    emitted just those two, which quietly killed the whole specialization axis: `route`
+    still asked Jev "what kind of work is this?" on every turn, `_pick` still looked for a
+    `coding` pool, found none, and fell through to `general`. The question cost money on
+    every turn and could not change any answer. A generator that cannot produce a pool is
+    the same as deleting the feature, so it produces all of them.
+    """
     bands = {"simple": (0.0, 0.6), "medium": (0.6, 3.2), "hard": (3.2, 1e9)}
     usable = [r for r in rows if not _excluded(_ref(r), exclude) and not r["model"].startswith("~") and r["price"] > 0]
     out: Dict[str, Dict[str, List[str]]] = {}
     for tier, (low, high) in bands.items():
         pool = sorted((r for r in usable if low <= r["price"] < high), key=lambda r: r["released"], reverse=True)
-        out[tier] = {
+        tier_pools: Dict[str, List[str]] = {
             "general": [_ref(r) for r in pool[:per_pool]],
             "vision": [_ref(r) for r in pool if r["vision"]][:per_pool],
         }
+        for specialty, hints in _SPECIALTY_HINTS.items():
+            named = [r for r in pool if any(h in r["model"].lower() for h in hints)]
+            rest = [r for r in pool if r not in named]
+            tier_pools[specialty] = [_ref(r) for r in (named + rest)[:per_pool]]
+        out[tier] = tier_pools
     return out
+
+
+def dead_axis(config: Dict[str, Any]) -> List[str]:
+    """Tiers where Jev is asked for a specialty that cannot change the answer.
+
+    `route` pays for a Choice over SPECIALTIES on every turn. If a tier only has `general`
+    and `vision` pools then every specialty answer resolves to the same model, and that
+    request is pure cost. Worth saying out loud rather than leaving someone to notice that
+    a routing decision never varies.
+    """
+    specialist = [s for s in SPECIALTIES if s not in ("general", "vision")]
+    blind: List[str] = []
+    for tier, pools in (config.get("tiers") or {}).items():
+        if isinstance(pools, dict) and not any(pools.get(s) for s in specialist):
+            blind.append(tier)
+    return blind
 
 
 def _pick(config: Dict[str, Any], rows: Dict[str, Dict[str, Any]], tier: str, specialty: str,

@@ -183,3 +183,55 @@ class JevSwitchTests(unittest.TestCase):
             for scope, name, value in (("__all__", "routing", "maybe"), ("__all__", "model", "on"), ("ghost", "routing", "on")):
                 with self.assertRaises(ValueError):
                     rs.set_jev_switch(tmp, scope, name, value)
+
+
+class JevPoolTests(unittest.TestCase):
+    """The live view has to say which pool a model came from; the decision log records
+    the decision, not the pool, so the dashboard resolves it against routing.json."""
+
+    def setUp(self):
+        import json
+        from unittest import mock
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = self.tmp.name
+        env = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": os.path.join(self.home, "xdg")})
+        env.start()
+        os.environ.pop("JEV_ROUTING_CONFIG", None)
+        self.addCleanup(env.stop)
+        self.addCleanup(self.tmp.cleanup)
+        os.makedirs(os.path.join(self.home, "jev"))
+        with open(os.path.join(self.home, "jev", "routing.json"), "w", encoding="utf-8") as fh:
+            json.dump({"tiers": {"medium": {"general": ["openrouter:mid/one"],
+                                            "coding": ["openrouter:codes/well"]}}}, fh)
+
+    def log(self, *rows):
+        import json
+        os.makedirs(os.path.join(self.home, "logs"), exist_ok=True)
+        with open(os.path.join(self.home, "logs", "jev-decisions.jsonl"), "w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+
+    def test_pools_are_reported_for_every_profile(self):
+        os.makedirs(os.path.join(self.home, "profiles", "wiki"))
+        out = rs.jev_pools(self.home)
+        self.assertEqual([p["name"] for p in out["profiles"]], ["default", "wiki"])
+        self.assertEqual(out["profiles"][0]["tiers"]["medium"]["coding"]["usable"], 1)
+
+    def test_live_route_says_the_specialty_pool_chose_the_model(self):
+        self.log({"ts": 10, "kind": "route", "tier": "medium", "specialty": "coding",
+                  "model": "openrouter:codes/well", "routed": True})
+        event = rs.jev_live(self.home)["events"][0]
+        self.assertEqual(event["pool"]["specialty"], "coding")
+        self.assertIs(event["pool"]["earned"], True)
+
+    def test_live_route_says_when_the_specialty_answer_was_discarded(self):
+        self.log({"ts": 11, "kind": "route", "tier": "medium", "specialty": "writing",
+                  "model": "openrouter:mid/one", "routed": True})
+        event = rs.jev_live(self.home)["events"][0]
+        self.assertEqual(event["pool"]["specialty"], "general")
+        self.assertIs(event["pool"]["earned"], False)
+
+    def test_a_kept_model_decision_carries_no_pool(self):
+        self.log({"ts": 12, "kind": "route", "routed": False, "from": "openrouter:mid/one",
+                  "reason": "low confidence 0.41"})
+        self.assertNotIn("pool", rs.jev_live(self.home)["events"][0])

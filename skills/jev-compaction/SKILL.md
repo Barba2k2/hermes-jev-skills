@@ -1,6 +1,6 @@
 ---
 name: jev-compaction
-description: Use before writing a handoff, a session summary, a compaction capsule or notes for another agent, and whenever a long conversation must be shrunk without losing decisions, exact values or unfinished work. Jev marks each turn keep, summarize or drop; you write from what is left.
+description: Use when shrinking a conversation you already have — a handoff, a session summary, a compaction capsule. Jev marks each turn keep, summarize or drop; you write the summary from what is left.
 version: 0.1.0
 license: MIT
 metadata:

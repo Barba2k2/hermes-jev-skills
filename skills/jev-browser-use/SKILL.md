@@ -1,6 +1,6 @@
 ---
 name: jev-browser-use
-description: Use when driving a web page interactively (clicking, typing, navigating, JS-rendered or logged-in pages). Jev picks each step from the elements actually observed on the page, with a host allowlist, a step budget and independent verification of the result.
+description: Use when driving a web page in a browser — clicking, typing, navigating, logged-in or JS-rendered pages. Jev picks each step from the elements observed, under a host allowlist and a step budget.
 version: 0.1.0
 license: MIT
 metadata:

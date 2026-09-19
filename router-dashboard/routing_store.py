@@ -25,6 +25,8 @@ from typing import Any, Optional
 
 import yaml
 
+import pools
+
 # ---------------------------------------------------------------- use cases
 
 #: Auxiliary task slots Hermes routes independently, with human labels.
@@ -56,9 +58,10 @@ MAIN_LABEL = "Main model (user-facing responses)"
 JEV_MODE = {
     "key": "jev/state.json",
     "installed": True,
-    "intent": "Jev reads each fresh turn and picks the cheapest model that is good enough, from the "
-              "simple / medium / hard pools in <hermes home>/jev/routing.json. Any model on the connected "
-              "provider can be in a pool.",
+    "intent": "Jev reads each fresh turn and answers two things: how hard it is (simple / medium / hard) and "
+              "what kind of work it is (coding, writing, research or general). Those two pick a pool in "
+              "<hermes home>/jev/routing.json, and the cheapest model in it that fits the turn wins. Any model "
+              "on the connected provider can be in a pool.",
     "desired_default": "shadow",
     "note": "Routing is done by the hermes-jev plugin. The switch above takes effect on the next message. "
             "Press Live to watch decisions as they happen. Inside Hermes the same switch is /jev routing on|shadow|off.",
@@ -516,14 +519,33 @@ def jev_live(hermes_home: str, since: float = 0.0, limit: int = 200) -> dict[str
                 row.setdefault("profile", name)
                 events.append(row)
     events.sort(key=lambda r: r.get("ts") or 0, reverse=True)
+    events = events[:limit]
     routes = [e for e in events if e.get("kind") == "route"]
     by_model: dict[str, int] = {}
     for e in routes:
         if e.get("model"):
             by_model[str(e["model"])] = by_model.get(str(e["model"]), 0) + 1
-    return {"now": time.time(), "events": events[:limit], "switches": switches,
+
+    # Which pool a model came from is the only thing that says whether the specialty
+    # answer earned its money, and the log records the decision, not the pool. Grids are
+    # built only for the profiles on screen because this is polled every couple of seconds.
+    homes = dict(_jev_homes(hermes_home))
+    grids: dict[str, dict] = {}
+    for e in routes:
+        name = str(e.get("profile") or "")
+        if e.get("model") and e.get("tier") and name in homes:
+            if name not in grids:
+                grids[name] = pools.grid_for(hermes_home, homes[name])["tiers"]
+            e["pool"] = pools.locate(grids[name], str(e["tier"]), str(e.get("specialty") or ""), str(e["model"]))
+
+    return {"now": time.time(), "events": events, "switches": switches,
             "plugin_installed": os.path.isdir(os.path.join(hermes_home, "plugins", "hermes-jev")),
             "by_model": sorted(by_model.items(), key=lambda kv: -kv[1])[:12]}
+
+
+def jev_pools(hermes_home: str) -> dict[str, Any]:
+    """Every profile's routing pools as a tier x specialty grid, with the dead axes named."""
+    return pools.tier_grid(hermes_home, _jev_homes(hermes_home))
 
 
 JEV_SWITCHES = {"routing": ("off", "shadow", "on"), "skills": ("off", "on"), "notice": ("off", "on")}

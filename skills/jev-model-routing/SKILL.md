@@ -1,6 +1,6 @@
 ---
 name: jev-model-routing
-description: Use when choosing which model should handle a task or sub-task, when delegating work to another model or sub-agent, when asked to cut model spend, or when setting up or tuning Jev routing pools. Jev picks the cheapest model that is good enough, from every model this machine can call.
+description: Use to pick the cheapest model that is good enough for a turn — choosing a model, delegating a sub-task to a sub-agent, cutting model spend, or setting up and tuning Jev routing pools.
 version: 0.1.0
 license: MIT
 metadata:

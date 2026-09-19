@@ -1458,3 +1458,56 @@ class TrivialTurnGateTests(unittest.TestCase):
         self.assertEqual(out.get("skipped"), "trivial")
         self.assertEqual(out["latency_ms"], 0)
         self.assertEqual(calls, [])
+
+
+class SpecializationAxisTests(unittest.TestCase):
+    """The routing config has two dimensions: how hard the turn is, and what kind of work.
+
+    An earlier simplification emitted only `general` and `vision` pools. Nothing errored —
+    `route` still asked Jev for a specialty, `_pick` still looked for that pool, found
+    none, and fell through to `general`. The question was asked and paid for on every
+    single turn and could not change any answer. These tests exist so a generator that
+    cannot produce a specialist pool fails loudly instead of quietly deleting a feature.
+    """
+
+    ROWS = [
+        {"provider": "openrouter", "model": "acme/cheap-coder", "price": 0.2,
+         "released": "2026-09-01", "vision": False},
+        {"provider": "openrouter", "model": "acme/cheap-general", "price": 0.3,
+         "released": "2026-08-01", "vision": False},
+        {"provider": "openrouter", "model": "acme/cheap-eyes", "price": 0.4,
+         "released": "2026-07-01", "vision": True},
+        {"provider": "openrouter", "model": "acme/mid-sonar", "price": 1.5,
+         "released": "2026-09-01", "vision": False},
+        {"provider": "openrouter", "model": "acme/big-thinker", "price": 9.0,
+         "released": "2026-09-01", "vision": True},
+    ]
+
+    def test_every_specialty_gets_a_pool(self):
+        tiers = route.suggest_tiers(self.ROWS, exclude=[])
+        for tier, pools in tiers.items():
+            for specialty in route.SPECIALTIES:
+                self.assertIn(specialty, pools, f"{tier} is missing the {specialty} pool")
+
+    def test_a_model_that_names_its_specialty_leads_that_pool(self):
+        tiers = route.suggest_tiers(self.ROWS, exclude=[])
+        self.assertTrue(tiers["simple"]["coding"][0].endswith("cheap-coder"))
+        self.assertTrue(tiers["medium"]["research"][0].endswith("mid-sonar"))
+
+    def test_a_hint_orders_a_pool_and_never_empties_it(self):
+        """No model in this band advertises writing, so the pool is still populated."""
+        tiers = route.suggest_tiers(self.ROWS, exclude=[])
+        self.assertTrue(tiers["simple"]["writing"], "a hint must order a pool, not filter it")
+
+    def test_dead_axis_names_tiers_whose_specialty_answer_is_discarded(self):
+        collapsed = {"tiers": {"simple": {"general": ["a:b"], "vision": ["a:c"]},
+                               "hard": {"general": ["a:d"], "coding": ["a:e"]}}}
+        self.assertEqual(route.dead_axis(collapsed), ["simple"])
+
+    def test_a_fully_specialised_config_reports_no_dead_axis(self):
+        healthy = {"tiers": route.suggest_tiers(self.ROWS, exclude=[])}
+        self.assertEqual(route.dead_axis(healthy), [])
+
+    def test_doctor_warns_about_a_dead_axis(self):
+        blind = route.dead_axis({"tiers": {"medium": {"general": ["a:b"]}}})
+        self.assertEqual(blind, ["medium"])

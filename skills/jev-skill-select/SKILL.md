@@ -1,6 +1,6 @@
 ---
 name: jev-skill-select
-description: Use when you have many skills installed and are unsure which one, if any, applies to the current request, or when asked to make skill loading cheaper or more accurate. Jev ranks the whole skill catalog against the turn and says whether any skill is needed at all.
+description: Use when unsure which of many installed skills applies to a request, if any, or when asked to make skill loading cheaper or more accurate. Jev ranks the whole catalog and may say no skill is needed.
 version: 0.1.0
 license: MIT
 metadata:

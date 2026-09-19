@@ -1,6 +1,6 @@
 ---
 name: jev-setup
-description: Use when Jev is not working yet, a Jev tool reports no_key or auth_failed, or the person asks to connect, install or fix Jev. Gets the TypeSafe API key from the person into the secret store without the agent ever seeing it.
+description: Use when Jev is not working yet, a Jev tool reports no_key or auth_failed, or the person asks to connect or fix Jev. Gets the TypeSafe API key into the secret store without the agent ever seeing it.
 version: 0.1.0
 license: MIT
 metadata:

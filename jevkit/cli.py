@@ -59,8 +59,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         except client.JevError as error:
             report["jev"] = {"reachable": False, "error": error.code}
     config = route.load_config()
-    report["routing"] = {"config": str(route.config_path()), "mode": config["mode"],
+    report["routing"] = {"config": str(route.config_path()),
+                         # This is the PRIVACY mode (what is sent), not the on/shadow/off
+                         # switch. They were both called "mode" and it read as the answer
+                         # to "is routing on?", which it has never been.
+                         "privacy_mode": config["mode"],
                          "tiers_configured": sorted(config.get("tiers") or {})}
+    blind = route.dead_axis(config)
+    if blind:
+        report["routing"]["dead_specialty_axis"] = blind
+        report["routing"]["warning"] = (
+            f"tier(s) {', '.join(blind)} have no specialist pools, so the 'what kind of work "
+            f"is this?' question is asked and paid for on every turn and cannot change the "
+            f"answer. Add coding/writing/research pools, or accept the cost knowingly.")
     report["hermes_home"] = str(catalog.hermes_home()) if catalog.hermes_home().is_dir() else None
     _out(report)
     return 0 if report["key"]["present"] else 1

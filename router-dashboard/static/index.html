@@ -85,6 +85,22 @@
   .livewrap{overflow-x:auto}
   tr.fresh td{animation:flash 1.6s ease-out}
   @keyframes flash{from{background:rgba(94,234,212,.22)}to{background:transparent}}
+  /* Pool grid. An empty cell has to read as a hole in the grid, not as a blank
+     table cell nobody notices — that gap is the whole point of the view. */
+  #poolGrid td{vertical-align:top;font-size:12.5px}
+  #poolGrid th.sp{text-transform:none;letter-spacing:0;font-size:12px}
+  /* Not .tier: that class is the live table's pill, and its dark pill text made these
+     labels invisible against the panel. */
+  #poolGrid td.tname{font-weight:650;white-space:nowrap}
+  #poolGrid td.gap{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(139,151,173,.11) 6px 12px)}
+  #poolGrid tr.dead td.tname{color:var(--warn)}
+  .pool{display:block;margin:1px 0;overflow-wrap:anywhere}
+  .pool.off{color:var(--dim);text-decoration:line-through}
+  .nopool{color:var(--dim)}
+  .note{border-left:3px solid var(--line);background:rgba(139,151,173,.07);padding:10px 12px;
+    border-radius:8px;margin:10px 0 0;font-size:13.5px}
+  .note.dead{border-color:var(--warn);background:rgba(251,191,36,.09);color:#ffe2a6}
+  .note.empty{border-color:var(--accent2);background:rgba(129,140,248,.09)}
   .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .seg button{border:0;border-radius:0;background:transparent;padding:8px 16px;color:var(--dim)}
   .seg button+button{border-left:1px solid var(--line)}
@@ -132,12 +148,27 @@
     <div class="small" id="jevBody"></div>
   </div>
 
+  <div class="card" id="poolCard">
+    <h2>Routing pools <span class="badge" id="poolBadge">…</span></h2>
+    <p class="small muted" style="margin:0 0 12px">
+      Jev answers two things per turn: a tier across the rows, a kind of work across the columns.
+      <code>_pick</code> tries the kind's own pool first, then <code>general</code>, and falls up a tier
+      if nothing there fits. <code>vision</code> is chosen by the turn's images, not by Jev's answer.
+    </p>
+    <div class="livewrap"><table id="poolGrid">
+      <thead id="poolHead"></thead>
+      <tbody id="poolBody"></tbody>
+    </table></div>
+    <div id="poolWarn"></div>
+    <p class="small muted" id="poolSource" style="margin:12px 0 0"></p>
+  </div>
+
   <div class="card" id="liveCard" style="display:none">
     <h2>Jev live routing <span class="badge" id="liveBadge">…</span></h2>
     <div class="legend" id="liveModels" style="margin:0 0 12px"></div>
     <div class="livewrap"><table>
       <thead><tr><th>Time</th><th>Profile</th><th>Decision</th><th>Kind of work</th><th>Routed to</th>
-        <th>Confidence</th><th>Jev</th><th>Note</th></tr></thead>
+        <th>From pool</th><th>Confidence</th><th>Jev</th><th>Note</th></tr></thead>
       <tbody id="liveBody"></tbody>
     </table></div>
     <p class="small muted" id="liveEmpty" style="margin:12px 0 0"></p>
@@ -372,9 +403,15 @@ function markMixed(){
   });
 }
 
+async function loadPools(){
+  const r = await fetch("/api/jev/pools", {headers: HDR}).then(x => x.json()).catch(() => null);
+  if (r && !r.error){ POOLS = r; renderPools(); }
+}
+
 function renderAll(){
   renderSwitch();
   renderProfiles();
+  renderPools();
   renderSplit();
   const p = CURRENT === ALL ? allView() : STATE.profiles.find(x => x.name === CURRENT);
   const main = $("#mainRow"); main.innerHTML = "";
@@ -416,6 +453,75 @@ function renderJev(){
     "<p class='muted small' style='margin:0'>" + j.note + "</p>";
 }
 
+/* --- routing pools ---
+   Rendered as a grid rather than a list so a missing specialty pool is a hole you can
+   see. Pools live in jev/routing.json, which this page only reads: jevkit owns writing it. */
+let POOLS = null;
+
+function poolsFor(name){
+  if (!POOLS || !POOLS.profiles.length) return null;
+  const by = n => POOLS.profiles.find(p => p.name === n);
+  return (name !== ALL && by(name)) || by("default") || POOLS.profiles[0];
+}
+
+/* Only the provider prefix comes off. Splitting on every colon turned
+   `openrouter:anthropic/claude-haiku-5:free` into the model named "free". */
+const shortRef = r => String(r == null ? "" : r).replace(/^[^:]*:/, "");
+
+function poolCell(cell){
+  if (!cell || !cell.listed) return {html: '<span class="nopool">empty</span>', gap: true};
+  const html = cell.models.map(m =>
+    '<span class="pool' + (m.excluded ? " off" : "") + '" title="' + esc(m.ref) +
+    (m.excluded ? " — removed by an exclude pattern" : "") + '">' +
+    esc(shortRef(m.ref)) + "</span>").join("");
+  return {html: html, gap: cell.usable === 0};
+}
+
+function renderPools(){
+  if (!POOLS) return;
+  const p = poolsFor(CURRENT);
+  const head = $("#poolHead"), body = $("#poolBody");
+  head.innerHTML = ""; body.innerHTML = "";
+  if (!p){ $("#poolBadge").textContent = "no profiles"; return; }
+
+  const columns = POOLS.specialties.concat(p.unknown_pools || []);
+  const hr = document.createElement("tr");
+  hr.innerHTML = "<th>Tier</th>" + columns.map(s => '<th class="sp" title="' +
+    (POOLS.answerable.indexOf(s) >= 0 ? "Jev's answer can name this kind of work"
+     : s === "general" ? "Where every kind of work falls back to"
+     : "Never named by Jev's answer") + '">' + esc(s) + "</th>").join("");
+  head.appendChild(hr);
+
+  POOLS.tiers.forEach(tier => {
+    const tr = document.createElement("tr");
+    if ((p.dead_tiers || []).indexOf(tier) >= 0) tr.className = "dead";
+    let cells = '<td class="tname">' + esc(tier) + "</td>";
+    columns.forEach(s => {
+      const c = poolCell((p.tiers[tier] || {})[s]);
+      cells += '<td class="' + (c.gap ? "gap" : "") + '">' + c.html + "</td>";
+    });
+    tr.innerHTML = cells;
+    body.appendChild(tr);
+  });
+
+  $("#poolWarn").innerHTML = (p.warnings || []).map(w =>
+    '<div class="note ' + esc(w.level) + '">' + esc(w.text) + "</div>").join("");
+
+  const dead = (p.dead_tiers || []).length, total = POOLS.tiers.length;
+  $("#poolBadge").textContent = !p.configured ? "no pools configured"
+    : dead === total ? "kind of work is discarded"
+    : dead ? dead + " of " + total + " tiers discard it"
+    : "every tier specialises";
+  $("#poolBadge").className = "badge" + (dead || !p.configured ? " changed" : "");
+
+  const shared = (poolsFor("default") || {sources: []}).sources.join("|");
+  const own = POOLS.profiles.filter(x => x.name !== "default" && x.sources.join("|") !== shared).length;
+  $("#poolSource").textContent =
+    (p.sources.length ? "Read from " + p.sources.join(", ") : "No routing.json found; Jev has no pools to pick from.") +
+    (CURRENT === ALL && own ? ". Showing the shared pools; " + own + " profile(s) override them" : "") +
+    (p.exclude && p.exclude.length ? ". Excluded: " + p.exclude.join(", ") : "");
+}
+
 /* --- auth ---
    Over Tailscale the server requires a token. The ?token= link exchanges it
    once for an HttpOnly cookie (fetches then carry it automatically); a header
@@ -448,7 +554,7 @@ async function load(){
   fillModels(m);
   $("#homeLabel").textContent = STATE.hermes_home;
   $("#countLabel").textContent = STATE.profiles.length + " profiles";
-  renderJev(); renderAll(); loadSwitches();
+  renderJev(); renderAll(); loadSwitches(); loadPools();
   const errs = STATE.profiles.filter(p => p.error);
   if (errs.length) console.warn("profiles with read errors", errs);
 }
@@ -605,24 +711,40 @@ document.querySelectorAll("#jevSeg button").forEach(b => b.onclick = async () =>
 let LIVE_TIMER = null, LIVE_SEEN = 0;
 const esc = t => String(t == null ? "" : t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
+/* Which pool the model came from is the only thing that says whether asking Jev for a
+   kind of work paid for itself: the specialty pool means yes, general means the answer
+   was bought and discarded. */
+function poolOrigin(e){
+  const p = e.pool;
+  if (!p) return '<span class="nopool">—</span>';
+  if (!p.found) return '<span class="nopool" title="the pools changed since this decision">not in a pool now</span>';
+  const where = esc(p.tier) + " / " + esc(p.specialty);
+  const why = p.earned === false ? "Jev said " + esc(p.asked) + ", but that pool was empty, so it fell back to general"
+    : p.earned ? "the " + esc(p.asked) + " pool, chosen by Jev's answer"
+    : "Jev answered general, so there was no specialist pool to try";
+  return '<span title="' + why + (p.fell_up ? " (the " + esc(e.tier) + " tier had nothing that fits)" : "") + '">' +
+    where + (p.earned === false ? ' <span class="muted">(fallback)</span>' : "") + "</span>";
+}
+
 function liveRow(e, fresh){
   const tr = document.createElement("tr");
   if (fresh) tr.className = "fresh";
   const t = new Date((e.ts || 0) * 1000).toLocaleTimeString();
   let cells;
   if (e.kind === "skill"){
-    cells = [t, e.profile, '<span class="tier kept">skill</span>', "", esc((e.picked || []).join(", ") || "none needed"),
+    cells = [t, e.profile, '<span class="tier kept">skill</span>', "", esc((e.picked || []).join(", ") || "none needed"), "",
              e.needs_skill == null ? "" : Number(e.needs_skill).toFixed(2), (e.latency_ms || "") + (e.latency_ms ? " ms" : ""), esc(e.status || "")];
   } else {
     const tier = e.tier || "kept";
-    const model = String(e.model || e.from || "").split(":").pop();
+    const model = shortRef(e.model || e.from);
     cells = [t, e.profile, '<span class="tier ' + esc(tier) + '">' + esc(tier) + "</span>",
-             esc(e.specialty || ""), "<b>" + esc(model) + "</b>", e.confidence == null ? "" : Number(e.confidence).toFixed(2),
+             esc(e.specialty || ""), "<b>" + esc(model) + "</b>", poolOrigin(e),
+             e.confidence == null ? "" : Number(e.confidence).toFixed(2),
              (e.latency_ms || "") + (e.latency_ms ? " ms" : ""),
              esc((e.mode === "shadow" ? "shadow · " : "") + (e.private ? "private · " : "") +
                  (e.tier ? (e.routed ? "switched" : "already on it") : (e.reason || "")))];
   }
-  tr.innerHTML = cells.map((c, i) => "<td" + (i === 7 ? ' class="wrap"' : "") + ">" + c + "</td>").join("");
+  tr.innerHTML = cells.map((c, i) => "<td" + (i === cells.length - 1 ? ' class="wrap"' : "") + ">" + c + "</td>").join("");
   return tr;
 }
 
@@ -638,7 +760,7 @@ async function pollLive(){
   $("#liveBadge").textContent = r.plugin_installed
     ? (eff.filter(x => x === "on").length + " routing · " + eff.filter(x => x === "shadow").length + " shadow") : "plugin not installed";
   $("#liveModels").innerHTML = r.by_model.map(([m, c], i) =>
-    '<span><span class="dot" style="background:' + PALETTE[i % PALETTE.length] + '"></span>' + esc(m.split(":").pop()) + " (" + c + ")</span>").join("");
+    '<span><span class="dot" style="background:' + PALETTE[i % PALETTE.length] + '"></span>' + esc(shortRef(m)) + " (" + c + ")</span>").join("");
   $("#liveEmpty").textContent = r.events.length ? "Decisions only. The text of a turn is never logged or shown here." :
     "No decisions yet. Turn routing on for a profile with /jev routing on (or shadow to watch without switching), then send it a message.";
 }

@@ -47,6 +47,28 @@ class SkillContentTests(unittest.TestCase):
         self.assertIn("Managed fleets", body)
         self.assertIn("required default", body)
 
+    def test_every_description_survives_the_picker_whole(self):
+        """The picker truncates a description; a skill whose tail is cut cannot be ranked on it.
+
+        All eight shipped descriptions were 223-284 characters against a 200-character
+        cut, so jev-model-routing and jev-frontier-work both arrived at the ranker as
+        near-identical "delegate work to another model" blurbs with the clauses that
+        separate them missing. Import the constant rather than repeating 200, so the
+        bound moves with the picker.
+        """
+        from jevkit import skillpick
+        shipped = skillpick.discover([SKILLS])
+        # discover() drops a skill with no description at all, which would hide it from
+        # this check and from the picker alike, so count them rather than trust the list.
+        self.assertEqual(len(shipped), len(list(SKILLS.glob("*/SKILL.md"))),
+                         "a shipped skill has no description for the picker to read")
+        for skill in shipped:
+            self.assertLessEqual(
+                len(skill["description"]), skillpick.DESCRIPTION_CHARS,
+                f"{skill['name']}: description is {len(skill['description'])} characters; "
+                f"the picker reads only the first {skillpick.DESCRIPTION_CHARS}",
+            )
+
     def test_no_machine_specific_paths_in_skills(self):
         for skill_md in sorted(SKILLS.glob("*/SKILL.md")):
             body = skill_md.read_text(encoding="utf-8")

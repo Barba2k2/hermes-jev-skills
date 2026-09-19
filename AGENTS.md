@@ -14,7 +14,7 @@ A person pointed you here to give their agent Jev. Follow these steps in order. 
    git clone https://github.com/kerpopule/hermes-jev-skills ~/hermes-jev-skills
    ```
 
-2. **Preview, then install.** Show the person what `--check` reports before running the real thing. It detects Hermes, Claude Code and Codex and installs for each. It edits one list (`plugins.enabled`) in each Hermes `config.yaml`, with a timestamped backup beside it.
+2. **Preview, then install.** Show the person what `--check` reports before running the real thing. It detects Hermes, Claude Code and Codex and installs for each. On Hermes it installs every plugin this repo ships (`hermes-jev` for routing, `hermes-handoff` for end-of-session capsules) plus `scripts/nightly-handoff.py` under the Hermes home, and edits one list (`plugins.enabled`) in each `config.yaml`, with a timestamped backup beside it.
 
    ```bash
    python3 ~/hermes-jev-skills/install.py --check
@@ -24,7 +24,13 @@ A person pointed you here to give their agent Jev. Follow these steps in order. 
    python3 ~/hermes-jev-skills/install.py
    ```
 
-   To enable the Hermes plugin in only some profiles: `--enable name1,name2`, or `--enable none`.
+   To enable the Hermes plugins in only some profiles: `--enable name1,name2`, or `--enable none`.
+
+   **Read the report's top-level `warning` and say it to the person, in your own words, before you go on.** The installer exits 0 even when it could do very little, so the warning is the only place that shows up. There are three:
+
+   - **`jev` is not on PATH.** Then step 3 will fail with "command not found". Either they add `~/.local/bin` to PATH, or you use `~/hermes-jev-skills/bin/jev` in place of `jev` for the rest of these steps. Do not silently pick one — tell them which you are doing.
+   - **No agent was found.** Nothing was installed but the command itself. Ask where their agent reads skills from and rerun with `--skills-dir <path>`.
+   - **`HERMES_HOME` is a single profile.** The install covered that one lane. Rerun with `--hermes-home ~/.hermes` for the whole fleet.
 
 3. **Connect the key, privately.** Run this and tell the person a page has opened on the computer you are running on, where they paste their key:
 
@@ -52,11 +58,13 @@ A person pointed you here to give their agent Jev. Follow these steps in order. 
 
 6. **Hermes only.** Plugins load when a session or gateway starts. Do not restart a running gateway unless the person asks. Tell them to run `/jev routing shadow` in a new session, watch a day of decisions in `logs/jev-decisions.jsonl`, then `/jev routing on`.
 
-7. **Report** in three or four sentences: what was installed where, that the key is connected, what routing mode is set, and what needs a restart.
+   `scripts/nightly-handoff.py` is copied into the Hermes home, but nothing schedules it and nothing runs it for them. Show them `python3 ~/.hermes/scripts/nightly-handoff.py --dry-run`, and add a cron or launchd entry only if they ask for one.
+
+7. **Report** in three or four sentences: what was installed where, any warning the installer printed, that the key is connected, what routing mode is set, and what needs a restart.
 
 ## Using it afterwards
 
-Read the skill that matches the task: `jev-model-routing`, `jev-memory`, `jev-compaction`, `jev-skill-select`, `jev-computer-use`, `jev-browser-use`, `jev-setup`. Every `jev` subcommand takes JSON on stdin and answers JSON on stdout, and every one returns a usable fail-open answer when Jev is unavailable, so never block on it.
+Read the skill that matches the task: `jev-model-routing`, `jev-memory`, `jev-compaction`, `jev-skill-select`, `jev-computer-use`, `jev-browser-use`, `jev-frontier-work`, `jev-setup`. Every `jev` subcommand takes JSON on stdin and answers JSON on stdout, and every one returns a usable fail-open answer when Jev is unavailable, so never block on it.
 
 ## Keeping it current
 

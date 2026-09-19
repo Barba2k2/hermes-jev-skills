@@ -7,6 +7,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -120,6 +121,58 @@ class ServerTestCase(unittest.TestCase):
         code, body = self.call("/api/plan", {"profile": "default",
                                              "changes": {"compression": {"model": "a\ninjected: true"}}})
         self.assertEqual(code, 400)
+
+
+class PoolsEndpointTestCase(unittest.TestCase):
+    """The grid the page draws comes from the server, so an empty specialty pool has to
+    arrive as a cell, not be missing from the payload."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.home = cls.tmp.name
+        with open(os.path.join(cls.home, "config.yaml"), "w", encoding="utf-8") as fh:
+            fh.write(CFG)
+        os.makedirs(os.path.join(cls.home, "jev"))
+        with open(os.path.join(cls.home, "jev", "routing.json"), "w", encoding="utf-8") as fh:
+            json.dump({"tiers": {t: {"general": ["openrouter:a/b"], "vision": ["openrouter:c/d"]}
+                                 for t in ("simple", "medium", "hard")}}, fh)
+        # A routing.json in the tester's own ~/.config would otherwise layer into this.
+        cls.env = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": os.path.join(cls.home, "xdg")})
+        cls.env.start()
+        os.environ.pop("JEV_ROUTING_CONFIG", None)
+        cls.httpd = srv.make_server("127.0.0.1", 0, srv.Config(cls.home, None))
+        cls.port = cls.httpd.server_address[1]
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.env.stop()
+        cls.tmp.cleanup()
+
+    def get(self, path):
+        with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.port, path), timeout=10) as resp:
+            return json.loads(resp.read().decode())
+
+    def test_pools_endpoint_returns_a_full_grid_per_profile(self):
+        body = self.get("/api/jev/pools")
+        self.assertEqual(body["tiers"], ["simple", "medium", "hard"])
+        grid = body["profiles"][0]["tiers"]
+        self.assertEqual(grid["medium"]["coding"]["listed"], 0)
+        self.assertEqual(grid["medium"]["general"]["models"][0]["ref"], "openrouter:a/b")
+
+    def test_pools_endpoint_names_the_dead_axis(self):
+        profile = self.get("/api/jev/pools")["profiles"][0]
+        self.assertEqual(profile["dead_tiers"], ["simple", "medium", "hard"])
+        self.assertIn("discarded", " ".join(w["text"] for w in profile["warnings"]))
+
+    def test_page_offers_the_grid_and_the_pool_column(self):
+        with urllib.request.urlopen("http://127.0.0.1:%d/" % self.port, timeout=10) as resp:
+            html = resp.read().decode()
+        self.assertIn("Routing pools", html)
+        self.assertIn("From pool", html)
 
 
 class NonLoopbackTestCase(unittest.TestCase):

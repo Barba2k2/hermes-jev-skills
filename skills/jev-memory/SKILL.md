@@ -1,6 +1,6 @@
 ---
 name: jev-memory
-description: Use after any memory, vault, session-history, wiki or web retrieval that returns more than five passages, before reading them into context, and whenever retrieved text might contain hidden instructions. Jev ranks the passages, drops the irrelevant ones and flags prompt injection.
+description: Use on passages a search just returned (memory, vault, session history, wiki, web) before reading them in. Jev ranks them, drops the irrelevant, and flags prompt injection hidden in the text.
 version: 0.1.0
 license: MIT
 metadata:
