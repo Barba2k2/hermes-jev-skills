@@ -28,7 +28,13 @@ _TOKEN_SHAPES = re.compile(
     r"AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|apikey_[A-Za-z0-9_]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})\b"
 )
 _EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-_PHONE = re.compile(r"(?<!\d)(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
+# The lookbehind excludes letters as well as digits. Without that, the digit tail of a
+# carrier tracking number reads as country-code + 3 + 3 + 4 and gets masked:
+# "1Z999AA10123456784" became "1Z999AA[phone]". Those numbers are the operational spine
+# of a shipping desk, and a redactor that silently eats them makes the text useless while
+# looking like it worked. A real phone number never begins immediately after a letter.
+_PHONE = re.compile(
+    r"(?<![A-Za-z0-9])(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
 _LONG_HEX = re.compile(r"\b[a-fA-F0-9]{32,}\b")
 
 

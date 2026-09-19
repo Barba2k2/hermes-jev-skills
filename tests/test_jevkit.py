@@ -1368,3 +1368,32 @@ class ConfidentialHandoffTests(unittest.TestCase):
         self.assertIn("a place a business operates from, yes", strict)
         # The earlier draft of this rule contradicted itself two bullets later.
         self.assertNotIn("the site's name does not", strict)
+
+
+class TrackingNumberRedactionTests(unittest.TestCase):
+    """A redactor that eats tracking numbers makes shipping text useless.
+
+    Found on a live deployment whose morning briefing is built entirely around UPS 1Z
+    numbers: the digit tail of "1Z999AA10123456784" parses as country-code + 3 + 3 + 4,
+    so the phone rule masked it and the output still looked fine.
+    """
+
+    def test_carrier_tracking_numbers_survive(self):
+        for tracking in ("1Z999AA10123456784", "1ZA2B3C40123456789", "1Z12345E0205271688"):
+            out = privacy.redact(f"Shipment {tracking} delivered Tuesday")
+            self.assertIn(tracking, out, tracking)
+            self.assertNotIn("[phone]", out, tracking)
+
+    def test_real_phone_numbers_are_still_masked(self):
+        for phone in ("850-555-0134", "(850) 555-0134", "+1 850 555 0134", "8505550134"):
+            out = privacy.redact(f"Call me on {phone} tomorrow")
+            self.assertIn("[phone]", out, phone)
+            self.assertNotIn("555-0134", out, phone)
+
+    def test_a_tracking_number_and_a_phone_in_one_line(self):
+        out = privacy.redact("Ref 1Z999AA10123456784 — questions to 850-555-0134")
+        self.assertIn("1Z999AA10123456784", out)
+        self.assertIn("[phone]", out)
+
+    def test_an_order_number_is_not_mistaken_for_a_phone(self):
+        self.assertIn("PO44812", privacy.redact("See PO44812 for details"))
