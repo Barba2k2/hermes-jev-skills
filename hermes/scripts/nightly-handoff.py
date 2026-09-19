@@ -112,6 +112,10 @@ def main() -> int:
     parser.add_argument("--within-hours", type=float, default=ACTIVE_WITHIN_S / 3600)
     parser.add_argument("--limit", type=int, default=MAX_PER_PROFILE)
     parser.add_argument("--dry-run", action="store_true", help="report only; write and close nothing")
+    parser.add_argument("--confidential", action="store_true",
+                        help="capsules carry no customer detail (required where a continuity "
+                             "rule forbids persisting it); a capsule that cannot meet the "
+                             "contract is not written at all")
     args = parser.parse_args()
 
     home = Path(args.hermes_home).expanduser()
@@ -161,12 +165,19 @@ def main() -> int:
                 log(f"  [dry-run] {session['id']}  lane={lane}  msgs={session['messages']}")
                 continue
             os.environ["HERMES_HOME"] = str(profile)     # capsules live beside their own profile
+            # Checked per profile, after HERMES_HOME moves: one profile may be bound by a
+            # continuity rule its neighbour is not.
+            confidential = args.confidential or ho.confidential_here()
+            entry["confidential"] = confidential
             try:
                 built = ho.build(session["id"], lane, write=writer,
                                  select=(compact.select if compact else None),
                                  digest=(compact.digest if compact else None),
                                  prompt_for=(compact.handoff_prompt if compact else None),
-                                 valid=(compact.looks_like_capsule if compact else None))
+                                 valid=(compact.looks_like_capsule if compact else None),
+                                 confidential=confidential,
+                                 scrub=(compact.redact_capsule
+                                        if (compact and confidential) else None))
             except Exception as error:  # noqa: BLE001
                 built = {"status": "error", "error": str(error)[:200]}
             entry["handoff"] = built.get("status")

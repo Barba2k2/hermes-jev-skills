@@ -83,12 +83,19 @@ def run_handoff(context: Dict[str, Any]) -> Dict[str, Any]:
     if not session_id:
         return {"status": "no_session"}
     compact = _jevkit()
+    # Some deployments are bound by a continuity rule that forbids carrying customer
+    # detail forward. Where that is true this must be on, and the capsule becomes a
+    # breadcrumb rather than a summary.
+    confidential = (_setting("confidential", False) in (True, "true", "yes", "on", 1)
+                    or handoff.confidential_here())
     return handoff.build(
         session_id, lane, write=_writer(),
         select=(compact.select if compact else None),
         digest=(compact.digest if compact else None),
         prompt_for=(compact.handoff_prompt if compact else None),
-        valid=(compact.looks_like_capsule if compact else None))
+        valid=(compact.looks_like_capsule if compact else None),
+        confidential=confidential,
+        scrub=(compact.redact_capsule if (compact and confidential) else None))
 
 
 # ── hooks ────────────────────────────────────────────────────────────────────

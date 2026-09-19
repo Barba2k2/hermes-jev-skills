@@ -1228,3 +1228,132 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(s["messages"], 3)
         self.assertEqual(s["routes"]["now"], 3)
         self.assertEqual(len(s["needs_review"]), 1)
+
+
+class ConfidentialHandoffTests(unittest.TestCase):
+    """Some deployments forbid carrying customer detail into the next session.
+
+    ECVA's own continuity rule is explicit: "Continuity may store only task, source
+    classes checked, missing evidence, owner/approval, and next safe action — never raw
+    sensitive content." A handoff that summarises a customer conversation breaks that
+    rule by default, so confidentiality has to be a mode the capsule is built in, not a
+    cleanup applied afterwards.
+    """
+
+    def setUp(self):
+        import importlib.util
+        root = Path(__file__).resolve().parents[1] / "hermes" / "plugin" / "hermes-handoff"
+        spec = importlib.util.spec_from_file_location("ho_conf", root / "handoff.py")
+        self.ho = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.ho)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {"HERMES_HOME": self.tmp.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _runner(self, messages=None):
+        messages = messages or [{"role": "user" if i % 2 == 0 else "assistant",
+                                 "content": f"turn {i}"} for i in range(12)]
+        return lambda *a, **k: mock.Mock(returncode=0, stdout=json.dumps({"messages": messages}))
+
+    # ── the prompt ───────────────────────────────────────────────────────────
+
+    def test_the_confidential_prompt_overrides_keep_identifiers(self):
+        plain = compact.handoff_prompt("[KEEP VERBATIM] user: call Jane on 555-123-4567")
+        strict = compact.handoff_prompt("[KEEP VERBATIM] user: call Jane on 555-123-4567",
+                                        confidential=True)
+        self.assertNotIn("CONFIDENTIALITY", plain)
+        self.assertIn("CONFIDENTIALITY", strict)
+        self.assertIn("BREADCRUMB", strict)
+        # It must explicitly retract the default instruction, not merely add to it.
+        self.assertIn("REPLACES the instruction to keep identifiers", strict)
+
+    def test_confidential_mode_still_keeps_internal_pointers(self):
+        strict = compact.handoff_prompt("x", confidential=True)
+        self.assertIn("file paths on our own servers", strict)
+
+    # ── the mechanical backstop ──────────────────────────────────────────────
+
+    def test_redact_capsule_removes_the_shapes_a_regex_can_be_sure_about(self):
+        text = ("## Working on\nQuote for Ashanthi at suzanne@example.com, call "
+                "(850) 555-0134, doc 3f2504e0-4f89-11d3-9a0c-0305e82c3301.")
+        out = compact.redact_capsule(text)
+        self.assertNotIn("suzanne@example.com", out)
+        self.assertNotIn("555-0134", out)
+        self.assertNotIn("3f2504e0-4f89-11d3-9a0c-0305e82c3301", out)
+        self.assertIn("## Working on", out)      # structure survives
+
+    def test_scrub_runs_even_when_the_writer_behaved(self):
+        """'It looked fine last time' is not a privacy control."""
+        out = self.ho.build(
+            "s1", "lane",
+            write=lambda p: "## Working on\nCall the customer on 850-555-0134\n## Next\nz",
+            valid=lambda t: True, scrub=compact.redact_capsule, confidential=True,
+            runner=self._runner())
+        self.assertEqual(out["status"], "ok")
+        self.assertNotIn("850-555-0134", Path(out["path"]).read_text())
+
+    # ── the fallback is the dangerous path ───────────────────────────────────
+
+    def test_a_refusing_writer_does_not_dump_the_transcript_under_confidentiality(self):
+        """The non-confidential fallback writes the raw transcript. Here that is the
+        single worst outcome, so the capsule must say nothing instead."""
+        messages = [{"role": "user", "content": "Ashanthi Kiridena wants the quote revised"}
+                    for _ in range(12)]
+        out = self.ho.build("s1", "lane", write=lambda p: "I'm sorry, I can't help with that.",
+                            valid=lambda t: "## Working on" in t and "sorry" not in t,
+                            confidential=True, scrub=compact.redact_capsule,
+                            runner=self._runner(messages))
+        self.assertEqual(out["status"], "ok")
+        text = Path(out["path"]).read_text()
+        self.assertNotIn("Kiridena", text)
+        self.assertNotIn("did not return a usable handoff", text)
+        self.assertIn("Ask the person what they were working on", text)
+
+    def test_the_same_refusal_without_confidentiality_still_keeps_the_transcript(self):
+        """The default behaviour must not regress — losing the thread is worse there."""
+        out = self.ho.build("s1", "lane", write=lambda p: "nope",
+                            valid=lambda t: False, runner=self._runner())
+        self.assertIn("turn 11", Path(out["path"]).read_text())
+
+    # ── refusing rather than silently downgrading ────────────────────────────
+
+    def test_an_old_jevkit_without_the_mode_refuses_rather_than_writing_in_the_clear(self):
+        def old_prompt_for(body, previous=""):      # no `confidential` keyword
+            return body
+        out = self.ho.build("s1", "lane", write=lambda p: "## Working on\nx",
+                            prompt_for=old_prompt_for, valid=lambda t: True,
+                            confidential=True, runner=self._runner())
+        self.assertEqual(out["status"], "confidential_unsupported")
+        self.assertFalse(self.ho.capsule_path("lane").exists())
+
+    def test_a_scrub_that_raises_refuses_to_write_under_confidentiality(self):
+        def bad_scrub(text):
+            raise ValueError("scrubber broke")
+        out = self.ho.build("s1", "lane", write=lambda p: "## Working on\nx",
+                            valid=lambda t: True, confidential=True, scrub=bad_scrub,
+                            runner=self._runner())
+        self.assertEqual(out["status"], "scrub_failed")
+        self.assertFalse(self.ho.capsule_path("lane").exists())
+
+    def test_a_scrub_that_raises_is_survivable_when_not_confidential(self):
+        def bad_scrub(text):
+            raise ValueError("scrubber broke")
+        out = self.ho.build("s1", "lane", write=lambda p: "## Working on\nx",
+                            valid=lambda t: True, scrub=bad_scrub, runner=self._runner())
+        self.assertEqual(out["status"], "ok")
+
+    def test_a_marker_file_turns_confidentiality_on_without_any_config_api(self):
+        """The host may expose no plugin-config API at all; the marker still works."""
+        self.assertFalse(self.ho.confidential_here())
+        (self.ho.handoff_dir() / self.ho.CONFIDENTIAL_MARKER).write_text("", encoding="utf-8")
+        self.assertTrue(self.ho.confidential_here())
+
+    def test_the_environment_can_also_turn_it_on(self):
+        for value in ("1", "true", "YES", "on"):
+            with mock.patch.dict(os.environ, {"HANDOFF_CONFIDENTIAL": value}):
+                self.assertTrue(self.ho.confidential_here(), value)
+        for value in ("0", "false", "", "maybe"):
+            with mock.patch.dict(os.environ, {"HANDOFF_CONFIDENTIAL": value}):
+                self.assertFalse(self.ho.confidential_here(), value)

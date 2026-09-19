@@ -112,6 +112,27 @@ def lane_key(context: Mapping[str, Any]) -> str:
     return _clean(key)
 
 
+CONFIDENTIAL_MARKER = "CONFIDENTIAL"
+
+
+def confidential_here() -> bool:
+    """Whether capsules for this home must carry no customer detail.
+
+    There are three ways to switch this on, and that is deliberate. A host may not
+    expose a plugin-config API at all — ask one that does not and you get the default
+    back, silently, which here means writing customer detail to disk against a rule that
+    forbids it. So the marker file is the authority: it is one ``ls`` to verify, it
+    cannot be swallowed by an exception handler, and it travels with the profile it
+    protects.
+    """
+    if str(os.environ.get("HANDOFF_CONFIDENTIAL", "")).strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    try:
+        return (handoff_dir() / CONFIDENTIAL_MARKER).exists()
+    except OSError:
+        return False
+
+
 def capsule_path(lane: str) -> Path:
     return handoff_dir() / f"handoff-{lane}.md"
 
@@ -227,6 +248,7 @@ def extract_text(response: Any) -> str:
 def build(
     session_id: str, lane: str, *, write: Any, select: Any = None, digest: Any = None,
     prompt_for: Any = None, valid: Any = None, runner: Optional[Any] = None,
+    confidential: bool = False, scrub: Any = None,
 ) -> Dict[str, Any]:
     """Produce and store the capsule. `write(prompt) -> str` is the text model.
 
@@ -259,15 +281,44 @@ def build(
 
     capsule = ""
     try:
-        capsule = (write(prompt_for(body, previous) if prompt_for else body) or "").strip()
+        if prompt_for:
+            try:
+                prompt = prompt_for(body, previous, confidential=confidential)
+            except TypeError:
+                # An older jevkit has no confidentiality mode. Fall back rather than
+                # fail — but a caller that asked for it must not silently not get it.
+                if confidential and scrub is None:
+                    return {"status": "confidential_unsupported"}
+                prompt = prompt_for(body, previous)
+        else:
+            prompt = body
+        capsule = (write(prompt) or "").strip()
     except Exception:  # noqa: BLE001
         capsule = ""
     if valid and not valid(capsule):
         # The writer refused, timed out, or answered something else. The digest is a worse
         # read than a capsule but it loses nothing, which matters more.
-        capsule = ("## Working on\nThe writer model did not return a usable handoff, so this is the "
-                   "filtered transcript instead. Lines marked KEEP VERBATIM are the ones that matter.\n\n"
-                   "## State\n" + body[:CAPSULE_MAX_CHARS])
+        if confidential:
+            # The fallback is the raw transcript. Under a confidentiality contract that
+            # is the one thing we must never write, so the capsule says nothing instead.
+            # A thin handoff is a bad morning; a transcript on disk is a broken promise.
+            capsule = ("## Working on\nA previous session ended without a usable handoff, and its "
+                       "transcript may not be carried forward under this profile's continuity rules. "
+                       "Ask the person what they were working on.\n\n## Next\nRe-establish the task "
+                       "from the person, not from stored history.")
+        else:
+            capsule = ("## Working on\nThe writer model did not return a usable handoff, so this is the "
+                       "filtered transcript instead. Lines marked KEEP VERBATIM are the ones that matter.\n\n"
+                       "## State\n" + body[:CAPSULE_MAX_CHARS])
+
+    if scrub:
+        # Mechanical second pass. Runs even when the writer behaved, because "it looked
+        # fine last time" is not a privacy control.
+        try:
+            capsule = scrub(capsule)
+        except Exception:  # noqa: BLE001
+            if confidential:
+                return {"status": "scrub_failed"}
 
     capsule = capsule[:CAPSULE_MAX_CHARS]
     stamp = time.strftime("%Y-%m-%d %H:%M %Z")

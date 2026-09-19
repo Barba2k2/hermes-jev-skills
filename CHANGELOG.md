@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0 (2026-09-19)
+
+Triage went into a live pipeline, and a continuity rule turned out to forbid what handoff was doing.
+
+- **Confidential handoffs.** Some deployments are bound by a rule that continuity may carry *only* task, sources checked, missing evidence, owner and next action — never customer detail. The default capsule breaks that rule by design: it is told to keep identifiers verbatim. `handoff_prompt(..., confidential=True)` replaces that instruction with a breadcrumb contract, and `compact.redact_capsule` is a mechanical second pass over the result. Both, because neither is enough: the regex is reliable but cannot know a surname is a customer, and the prompt can see but can be disobeyed.
+- **Confidentiality cannot switch itself off quietly.** A host may expose no plugin-config API at all, and asking one that does not returns the default — which here means writing customer data against a rule forbidding it. A `CONFIDENTIAL` marker file in the handoff directory is the authority: one `ls` to verify, impossible to swallow in an exception handler. (This is the third silent-default failure in this project. The pattern is the lesson.)
+- **Under confidentiality, a failed writer writes nothing.** The normal fallback stores the raw transcript, because losing the thread is worse than a fat capsule. Under a confidentiality contract that fallback is the single worst outcome, so the capsule says "ask the person what they were working on" instead. An older jevkit that cannot honour the mode refuses rather than silently downgrading.
+- **[`docs/wiring-triage-into-a-live-pipeline.md`](docs/wiring-triage-into-a-live-pipeline.md)** and [`scripts/triage_adapter.py`](scripts/triage_adapter.py) — the four rules that made it safe to edit something already carrying real traffic: fail open or don't ship; shadow before it steers; respect the emit contract you found; bound the work and prove it *in the scheduler*, not in your shell.
+- **A count cap is not a time cap.** The first wiring capped triage at 40 messages with a 6s timeout — 240s worst case, inside a router the wrapper kills at 180s. A kill mid-loop loses every message already marked seen, because dedupe is written before routing. `Budget` bounds messages *and* wall-clock, and reports what it skipped rather than truncating silently.
+
 ## 0.8.0 (2026-09-19)
 
 - **`jev triage`** — classify a message the moment it lands: act **now**, **today**, **queue**, or **ignore**. One Jev request per message (~400 ms, $0.00006) answers urgency, kind, whether a person must decide, and whether the sender is blocked. Cheap enough to run on every message, which is the point — triage that only runs when someone remembers to look is not triage.

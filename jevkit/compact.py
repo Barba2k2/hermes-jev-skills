@@ -8,6 +8,7 @@ the handoff is shorter, cheaper, and stops losing the one line that mattered.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from . import client, privacy
@@ -116,9 +117,44 @@ Rules:
 """
 
 
-def handoff_prompt(digest_text: str, previous: str = "") -> str:
+CONFIDENTIAL_RULES = """
+CONFIDENTIALITY — these override the rules above wherever they conflict:
+- This handoff is a BREADCRUMB, not a summary. Record only: the task, which classes of
+  source were checked, what evidence is still missing, who owns or must approve it, and
+  the next safe action.
+- Never carry a person's name, an email address, a phone number, a postal address, a
+  document or file name, a message id, a link, an account or invoice number, or any
+  payment, health or disability detail. Write "the customer", "the staff member", "the
+  quote in the shared drive" instead.
+- This REPLACES the instruction to keep identifiers verbatim. Where a [KEEP VERBATIM]
+  line contains an identifier of that kind, carry the decision it expresses and drop the
+  identifier. A constraint like "ship by Tuesday, not to the second site" survives; the
+  site's name does not.
+- Internal technical pointers — file paths on our own servers, branch names, commands,
+  ports, error strings — are fine and should be kept.
+- If following these rules would leave a section with nothing to say, write "nothing
+  recorded" under it rather than reaching for detail you are not allowed to keep.
+"""
+
+
+def redact_capsule(text: str, limit: int = 6000) -> str:
+    """Mechanical backstop over a written capsule: emails, phones, tokens, long ids.
+
+    The prompt above is the real control, because only the writer knows that "Kiridena"
+    is a customer. This catches the shapes a regex *can* be sure about, so a writer that
+    ignores its instructions still cannot leave a phone number on disk. Both layers
+    exist because neither is sufficient: one is reliable but blind, the other sees but
+    can be disobeyed.
+    """
+    return _GUID.sub("[id]", privacy.redact(text, limit=limit))
+
+
+_GUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
+
+
+def handoff_prompt(digest_text: str, previous: str = "", *, confidential: bool = False) -> str:
     """The full prompt for whatever text model writes the capsule. Jev cannot write it."""
-    prompt = HANDOFF_PROMPT
+    prompt = HANDOFF_PROMPT + (CONFIDENTIAL_RULES if confidential else "")
     if previous.strip():
         prompt += ("\nA PREVIOUS handoff for this same work is below. Carry forward anything still "
                    "true, especially Pointers, and fold in what has happened since. Do not lose "
