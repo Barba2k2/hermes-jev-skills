@@ -1357,3 +1357,14 @@ class ConfidentialHandoffTests(unittest.TestCase):
         for value in ("0", "false", "", "maybe"):
             with mock.patch.dict(os.environ, {"HANDOFF_CONFIDENTIAL": value}):
                 self.assertFalse(self.ho.confidential_here(), value)
+
+    def test_a_business_location_is_kept_because_the_work_depends_on_it(self):
+        """The first version of this rule dropped "ship to Fort Walton, not Destin"
+        down to "the approved location" — deleting the one fact the sentence existed
+        to carry. A site a business ships to is not personal data."""
+        strict = compact.handoff_prompt("x", confidential=True)
+        self.assertIn("A business location IS an operational fact", strict)
+        self.assertIn("Fort Walton", strict)
+        self.assertIn("a place a business operates from, yes", strict)
+        # The earlier draft of this rule contradicted itself two bullets later.
+        self.assertNotIn("the site's name does not", strict)

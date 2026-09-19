@@ -122,14 +122,19 @@ CONFIDENTIALITY — these override the rules above wherever they conflict:
 - This handoff is a BREADCRUMB, not a summary. Record only: the task, which classes of
   source were checked, what evidence is still missing, who owns or must approve it, and
   the next safe action.
-- Never carry a person's name, an email address, a phone number, a postal address, a
+- Never carry a person's name, an email address, a phone number, a street address, a
   document or file name, a message id, a link, an account or invoice number, or any
   payment, health or disability detail. Write "the customer", "the staff member", "the
   quote in the shared drive" instead.
+- A business location IS an operational fact, not personal data. Keep a site, branch,
+  city or depot by name when the work depends on it — "ship to Fort Walton, not Destin"
+  must survive verbatim. Dropping it to "the approved location" destroys the only thing
+  that sentence was for. The line is: a place a business operates from, yes; a place a
+  person lives, no.
 - This REPLACES the instruction to keep identifiers verbatim. Where a [KEEP VERBATIM]
   line contains an identifier of that kind, carry the decision it expresses and drop the
-  identifier. A constraint like "ship by Tuesday, not to the second site" survives; the
-  site's name does not.
+  identifier. "Call Jane Doe on 555-0134 before Tuesday" becomes "call the customer back
+  before Tuesday" — the deadline survives, the person does not.
 - Internal technical pointers — file paths on our own servers, branch names, commands,
   ports, error strings — are fine and should be kept.
 - If following these rules would leave a section with nothing to say, write "nothing
